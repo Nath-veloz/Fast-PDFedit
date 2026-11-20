@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0" />
+  <title>Fast-PDFedit</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .pdf-widget-input {
+      position: absolute;
+      background: rgba(138, 180, 248, 0.18);
+      color: #0f172a;
+      border: 1px solid rgba(59, 130, 246, 0.45);
+      border-radius: 2px;
+      padding: 0 2px;
+      margin: 0;
+      outline: none;
+      box-sizing: border-box;
+    }
+    .pdf-widget-input:hover {
+      background: rgba(138, 180, 248, 0.30);
+      border-color: #2563eb;
+    }
+    .pdf-widget-input:focus {
+      background: rgba(255, 255, 255, 0.96);
+      border-color: #2563eb;
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+      z-index: 25;
+    }
+    .pdf-widget-checkbox {
+      position: absolute;
+      margin: 0;
+      padding: 0;
+      cursor: pointer;
+      accent-color: #2563eb;
+    }
+  </style>
+</head>
+<body class="bg-[#202124] text-[#e8eaed] h-screen flex flex-col overflow-hidden select-none">
+
+  <!-- Barra superior -->
+  <header class="h-12 bg-[#323639] border-b border-black/40 px-2 sm:px-3 flex items-center justify-between gap-1.5 shrink-0 z-30 shadow">
+    <!-- Esquerda: Voltar + Abrir + Nome -->
+    <div class="flex items-center gap-1.5 min-w-0">
+      <button
+        id="backBtn"
+        type="button"
+        class="hidden px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 text-xs font-medium text-slate-100 shrink-0"
+        title="Voltar para seleção de arquivo"
+      >
+        ← Voltar
+      </button>
+      <label
+        title="Abrir outro PDF"
+        class="cursor-pointer px-2 py-1.5 rounded hover:bg-white/10 text-xs font-medium text-slate-200 shrink-0"
+      >
+        <span>Abrir</span>
+        <input id="pdfInput" type="file" accept="application/pdf,.pdf" class="hidden" />
+      </label>
+      <span id="fileNameLabel" class="text-xs sm:text-sm text-slate-200 truncate">Fast-PDFedit</span>
+    </div>
+
+    <!-- Centro: Páginas + Zoom + Ferramentas (desktop/tablet) -->
+    <div id="toolbarCenter" class="hidden md:flex items-center gap-1.5">
+      <div class="flex items-center bg-[#1f2224] rounded px-1.5 py-0.5 text-xs gap-1">
+        <button id="prevPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-white/10 rounded" title="Página anterior">‹</button>
+        <input id="pageInput" type="number" min="1" value="1" class="w-8 bg-transparent text-center text-xs outline-none" />
+        <span class="text-slate-400">/</span>
+        <span id="totalPagesLabel" class="text-slate-300 pr-1">1</span>
+        <button id="nextPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-white/10 rounded" title="Próxima página">›</button>
+      </div>
+
+      <div class="h-4 w-px bg-white/15 mx-1"></div>
+
+      <button id="zoomOutBtn" type="button" class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center" title="Diminuir zoom">−</button>
+      <span id="zoomLabel" class="text-xs w-11 text-center text-slate-200">100%</span>
+      <button id="zoomInBtn" type="button" class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center" title="Aumentar zoom">+</button>
+
+      <div class="h-4 w-px bg-white/15 mx-1"></div>
+
+      <button
+        id="toolCursorBtn"
+        type="button"
+        class="px-2 py-1 rounded text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40"
+        title="Preencher campos"
+      >
+        Campos
+      </button>
+      <button
+        id="toolTextBtn"
+        type="button"
+        class="w-7 h-7 rounded hover:bg-white/10 text-sm font-serif font-bold flex items-center justify-center"
+        title="Adicionar texto na página"
+      >
+        T
+      </button>
+      <button
+        id="toolDrawBtn"
+        type="button"
+        class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center"
+        title="Desenho livre"
+      >
+        ✎
+      </button>
+      <button
+        id="undoBtn"
+        type="button"
+        class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center disabled:opacity-30"
+        title="Desfazer"
+        disabled
+      >
+        ↶
+      </button>
+    </div>
+
+    <!-- Direita: Fixar + Salvar + Baixar -->
+    <div id="actionsRight" class="hidden items-center gap-1.5 shrink-0">
+      <label id="flattenWrap" class="hidden lg:flex items-center gap-1 text-xs text-slate-300 cursor-pointer mr-1" title="Fixa os textos no PDF para abrir igual em qualquer lugar">
+        <input id="flattenCheckbox" type="checkbox" checked class="accent-blue-500 rounded" />
+        <span>Fixar</span>
+      </label>
+      <button
+        id="saveBtn"
+        type="button"
+        class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-semibold text-xs px-2.5 py-1.5 rounded transition"
+        title="Salvar progresso atual para continuar editando"
+      >
+        Salvar
+      </button>
+      <button
+        id="exportBtn"
+        type="button"
+        class="bg-[#8ab4f8] hover:bg-[#aecbfa] disabled:bg-slate-700 disabled:text-slate-400 text-[#202124] font-semibold text-xs px-2.5 sm:px-3 py-1.5 rounded transition"
+      >
+        Baixar
+      </button>
+    </div>
+  </header>
+
+  <!-- Barra compacta para celular / telas menores -->
+  <div id="mobileSubbar" class="hidden md:hidden bg-[#292b2e] border-b border-black/40 px-2 py-1.5 flex items-center justify-between gap-1 text-xs shrink-0">
+    <div class="flex items-center gap-1">
+      <button id="mPrevBtn" type="button" class="px-2 py-1 bg-white/10 rounded">‹</button>
+      <span id="mPageLabel" class="px-1">1 / 1</span>
+      <button id="mNextBtn" type="button" class="px-2 py-1 bg-white/10 rounded">›</button>
+    </div>
+    <div class="flex items-center gap-1">
+      <button id="mZoomOut" type="button" class="px-2 py-1 bg-white/10 rounded">−</button>
+      <span id="mZoomLabel" class="px-1">100%</span>
+      <button id="mZoomIn" type="button" class="px-2 py-1 bg-white/10 rounded">+</button>
+    </div>
+    <div class="flex items-center gap-1">
+      <button id="mToolFields" type="button" class="px-2 py-1 rounded bg-blue-500/30 text-blue-200">Campos</button>
+      <button id="mToolText" type="button" class="px-2 py-1 rounded bg-white/10 font-serif font-bold">T</button>
+      <button id="mToolDraw" type="button" class="px-2 py-1 rounded bg-white/10">✎</button>
+      <button id="mUndo" type="button" class="px-2 py-1 rounded bg-white/10 disabled:opacity-30" disabled>↶</button>
+    </div>
+  </div>
+
+  <!-- Aviso rápido de salvamento -->
+  <div id="toastBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-[#1f2224] text-emerald-300 border border-emerald-500/40 text-xs px-3.5 py-2 rounded-lg shadow-lg"></div>
+
+  <!-- Área central -->
+  <main id="viewport" class="flex-1 overflow-auto p-3 sm:p-6 flex flex-col items-center">
+    <div id="emptyState" class="my-auto max-w-md w-full bg-[#292b2e] border border-white/10 rounded-xl p-6 text-center space-y-3 shadow-lg">
+      <h2 class="text-base font-semibold text-white">Fast-PDFedit</h2>
+      <p class="text-xs text-slate-300 leading-relaxed">
+        Abra uma ficha ou PDF editável para preencher os campos diretamente na página, salvar seu progresso e baixar — sem conta.
+      </p>
+      <label class="inline-block cursor-pointer bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#202124] font-semibold text-xs px-4 py-2.5 rounded-lg">
+        Selecionar PDF
+        <input id="pdfInputEmpty" type="file" accept="application/pdf,.pdf" class="hidden" />
+      </label>
+      <p id="statusText" class="text-xs text-slate-400 min-h-[1rem]"></p>
+    </div>
+
+    <div id="pageStage" class="hidden relative bg-white shadow-2xl">
+      <img id="pageImage" alt="Página PDF" class="block select-none pointer-events-none" />
+      <div id="widgetsLayer" class="absolute inset-0"></div>
+      <canvas id="drawCanvas" class="absolute inset-0"></canvas>
+      <div id="freeTextsLayer" class="absolute inset-0 pointer-events-none"></div>
+    </div>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
