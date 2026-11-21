@@ -1,0 +1,149 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/annot",
+  "crates/cos",
+  "crates/create",
+  "crates/crypt",
+  "crates/edit",
+  "crates/engine",
+  "crates/export",
+  "crates/filters",
+  "crates/fonts",
+  "crates/forms",
+  "crates/geom",
+  "crates/js",
+  "crates/measure",
+  "crates/model",
+  "crates/optimize",
+  "crates/oracle",
+  "crates/render",
+  "crates/xfa",
+  "crates/a11y", 
+  "crates/audit", 
+  "crates/compare", 
+  "crates/content", 
+  "crates/ocr", 
+  "crates/print", 
+  "crates/redact", 
+  "crates/sign", 
+  "crates/testkit", 
+  "crates/xfdf",
+  "crates/organize",
+  "crates/preflight",
+]
+exclude = ["vendor", "ref_web_src"]
+
+[workspace.package]
+version = "0.21.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/storytold/pdfcraft"
+
+[workspace.dependencies]
+craft-cms = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
+craft-pdf = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", features = ["cos", "crypt", "filters", "fonts"] }
+edit-session = { path = "vendor/edit-session", version = "=0.1.0-alpha.2" }
+craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-image-codecs = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "a7c6c9d61c6b36f4aec55b044f257340083fd571" }
+craft-tiff = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-jpeg = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-xml = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "1546550b0d4b79b8156a1fefaac8b3b317a4aee0" }
+craft-zip = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-rtf = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
+craft-mime = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
+craft-csv = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-docx = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
+craft-wordmodel = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
+craft-pptx = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890" }
+craft-drawingml = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890" }
+craft-opc = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+craft-print = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
+
+# internal
+craft-markdown = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "fbb3f47f7ae712192586984af11ca8f6c0f64d33" }
+pdfcraft-preflight = { path = "crates/preflight", version = "0.21.0" }
+pdfcraft-organize = { path = "crates/organize", version = "0.21.0" }
+pdfcraft-a11y = { path = "crates/a11y", version = "0.21.0" }
+pdfcraft-audit = { path = "crates/audit", version = "0.21.0" }
+pdfcraft-compare = { path = "crates/compare", version = "0.21.0" }
+pdfcraft-ocr = { path = "crates/ocr", version = "0.21.0" }
+pdfcraft-print = { path = "crates/print", version = "0.21.0" }
+pdfcraft-redact = { path = "crates/redact", version = "0.21.0" }
+pdfcraft-sign = { path = "crates/sign", version = "0.21.0" }
+pdfcraft-xfdf = { path = "crates/xfdf", version = "0.21.0" }
+pdfcraft-testkit = { path = "crates/testkit", version = "0.21.0" }
+pdfcraft-oracle = { path = "crates/oracle", version = "0.21.0" }
+pdfcraft-geom = { path = "crates/geom", version = "0.21.0" }
+pdfcraft-filters = { path = "crates/filters", version = "0.21.0" }
+pdfcraft-cos = { path = "crates/cos", version = "0.21.0" }
+pdfcraft-crypt = { path = "crates/crypt", version = "0.21.0" }
+pdfcraft-measure = { path = "crates/measure", version = "0.21.0" }
+pdfcraft-annot = { path = "crates/annot", version = "0.21.0" }
+pdfcraft-fonts = { path = "crates/fonts", version = "0.21.0" }
+pdfcraft-model = { path = "crates/model", version = "0.21.0" }
+pdfcraft-content = { path = "crates/content", version = "0.21.0" }
+pdfcraft-optimize = { path = "crates/optimize", version = "0.21.0" }
+pdfcraft-js = { path = "crates/js", version = "0.21.0" }
+pdfcraft-export = { path = "crates/export", version = "0.21.0" }
+pdfcraft-edit = { path = "crates/edit", version = "0.21.0" }
+pdfcraft-create = { path = "crates/create", version = "0.21.0" }
+pdfcraft-forms = { path = "crates/forms", version = "0.21.0" }
+pdfcraft-xfa = { path = "crates/xfa", version = "0.21.0" }
+pdfcraft-render = { path = "crates/render", version = "0.21.0" }
+pdfcraft-engine = { path = "crates/engine", version = "0.21.0" }
+
+# pdf
+hayro = "0.7.1"
+hayro-syntax = "0.7.2"
+lopdf = "0.45"
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+weezl = "0.2"
+fax = "0.2.7"
+hayro-ccitt = "0.3"
+hayro-jbig2 = "0.3"
+
+# foundation
+thiserror = "2"
+zeroize = "1"
+regex = { version = "1", default-features = false, features = ["std", "unicode", "perf-dfa"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+log = "0.4"
+kurbo = "0.13"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+
+# testing
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[patch.crates-io]
+hayro-interpret = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "e7873217287876f76a045550369c90a541693c33" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+lopdf = { path = "vendor/lopdf" }
