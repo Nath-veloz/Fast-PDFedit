@@ -44,7 +44,7 @@ repository = "https://github.com/storytold/pdfcraft"
 [workspace.dependencies]
 craft-cms = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", features = ["cos", "crypt", "filters", "fonts"] }
-edit-session = { path = "vendor/edit-session", version = "=0.1.0-alpha.2" }
+# edit-session = { path = "vendor/edit-session", version = "=0.1.0-alpha.2" }
 craft-docpath = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
 craft-image-codecs = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "a7c6c9d61c6b36f4aec55b044f257340083fd571" }
 craft-tiff = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
@@ -57,8 +57,8 @@ craft-csv = { version = "0.1.0", git = "https://github.com/storytold/craft-libs"
 craft-docx = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
 craft-wordmodel = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b8eaa8e2f3561f9fa27fcf3b7f67ce915e93caa3" }
 craft-pptx = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890" }
-craft-drawingml = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890" }
-craft-opc = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
+# craft-drawingml = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "010702ee9b030844c852939095b1da0d0656a890" }
+# craft-opc = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3" }
 craft-print = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
 
 # internal
@@ -92,7 +92,7 @@ pdfcraft-create = { path = "crates/create", version = "0.21.0" }
 pdfcraft-forms = { path = "crates/forms", version = "0.21.0" }
 pdfcraft-xfa = { path = "crates/xfa", version = "0.21.0" }
 pdfcraft-render = { path = "crates/render", version = "0.21.0" }
-pdfcraft-engine = { path = "crates/engine", version = "0.21.0" }
+# pdfcraft-engine = { path = "crates/engine", version = "0.21.0" }
 
 # pdf
 hayro = "0.7.1"
@@ -100,9 +100,9 @@ hayro-syntax = "0.7.2"
 lopdf = "0.45"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 weezl = "0.2"
-fax = "0.2.7"
+# fax = "0.2.7"
 hayro-ccitt = "0.3"
-hayro-jbig2 = "0.3"
+# hayro-jbig2 = "0.3"
 
 # foundation
 thiserror = "2"
@@ -147,3 +147,5 @@ hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84
 hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "e7873217287876f76a045550369c90a541693c33" }
 hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
 lopdf = { path = "vendor/lopdf" }
+vello_common = { path = "vendor/vello_common" }
+vello_cpu = { path = "vendor/vello_cpu" }
