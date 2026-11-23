@@ -3192,6 +3192,7 @@ dependencies = [
  "pdfcraft-xfa",
  "pdfcraft-xfdf",
  "rustix",
+ "serde_json",
  "thiserror",
  "unicode-segmentation",
  "url",

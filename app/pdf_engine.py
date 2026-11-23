@@ -1,306 +1,277 @@
-import re
-from typing import Any, Dict, List, Optional, Tuple
-import pymupdf
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+from typing import Any, Dict, List, Optional
+
+PROBE_EXE = Path(os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\cargo_target\pdfcraft_core\debug\pdfcraft_probe.exe"))
+PROBE_TIMEOUT_SECONDS = 30
 
 
-def _find_nearby_label(words: List[Tuple], rect: pymupdf.Rect) -> str:
-    """Busca a palavra mais próxima à esquerda ou logo acima do campo como fallback."""
-    best_label = ""
-    best_dist = float("inf")
-
-    for x0, y0, x1, y1, word, *_ in words:
-        word = word.strip()
-        if not word or len(word) < 2:
-            continue
-
-        to_left = x1 <= rect.x0 + 4 and abs((y0 + y1) / 2 - (rect.y0 + rect.y1) / 2) <= 18
-        above = y1 <= rect.y0 + 4 and 0 <= (rect.y0 - y1) <= 22 and abs(x0 - rect.x0) <= 40
-
-        if to_left or above:
-            dx = max(0.0, rect.x0 - x1)
-            dy = max(0.0, rect.y0 - y1)
-            dist = (dx * dx + dy * dy) ** 0.5
-            if dist < best_dist:
-                best_dist = dist
-                best_label = word
-
-    return best_label
+class PdfEngineError(RuntimeError):
+    """Erro retornado pelo motor Rust pdfcraft-engine."""
 
 
-def _is_valid_widget(widget: pymupdf.Widget, page_rect: pymupdf.Rect) -> bool:
-    """Filtra widgets invisíveis, ocultos ou com geometria inválida/fantasma."""
-    r = widget.rect
-    if r.is_empty or r.is_infinite:
-        return False
-    if r.width < 4 or r.height < 4:
-        return False
+def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[str, Any]:
+    if not PROBE_EXE.exists():
+        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
 
-    # Ignora campos ocultos (PDF_ANNOT_IS_HIDDEN = 2)
-    flags = getattr(widget, "field_flags", 0) or 0
-    if flags & 2:
-        return False
-
-    # Ignora caixas com proporção extrema que costumam ser artefatos de layout
-    if widget.field_type_string != "CheckBox":
-        ratio = r.height / max(r.width, 1.0)
-        if ratio > 3.0 and r.width < 25:
-            return False
-
-    inter = r & page_rect
-    if inter.is_empty or inter.width < 3 or inter.height < 3:
-        return False
-
-    return True
-
-
-def _extract_balanced_parens(text: str, start_idx: int) -> Optional[str]:
-    """Extrai o conteúdo de uma string literal PDF '(...)' respeitando parênteses aninhados e escapes."""
-    n = len(text)
-    if start_idx >= n or text[start_idx] != "(":
-        return None
-
-    depth = 0
-    escaped = False
-    chars: List[str] = []
-
-    for i in range(start_idx, n):
-        ch = text[i]
-        if escaped:
-            chars.append(ch)
-            escaped = False
-            continue
-        if ch == "\\":
-            escaped = True
-            chars.append(ch)
-            continue
-        if ch == "(":
-            depth += 1
-            if depth > 1:
-                chars.append(ch)
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return "".join(chars)
-            chars.append(ch)
-        elif depth > 0:
-            chars.append(ch)
-
-    return None
-
-
-def _resolve_js_from_ref(doc: pymupdf.Document, ref_str: str) -> str:
-    """Resolve uma referência indireta '123 0 R' para o texto/stream JS quando existir."""
-    match = re.search(r"(\d+)\s+\d+\s+R", ref_str)
-    if not match:
-        return ref_str.strip()
-
-    xref = int(match.group(1))
+    tmp_path: Optional[Path] = None
     try:
-        stream_data = doc.xref_stream(xref)
-        if stream_data:
-            return stream_data.decode("utf-8", errors="replace").strip()
-    except Exception:
-        pass
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(pdf_bytes)
+            tmp_path = Path(tmp.name)
+
+        cmd = [str(PROBE_EXE), *(args or []), str(tmp_path)]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PdfEngineError("Tempo limite excedido ao executar o motor PDF.") from exc
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
+    raw_out = (proc.stdout or "").strip()
+    raw_err = (proc.stderr or "").strip()
+
+    if proc.returncode != 0:
+        detail = raw_err or raw_out or f"Código de saída {proc.returncode}"
+        raise PdfEngineError(f"Falha no pdfcraft_probe: {detail}")
+
+    if not raw_out:
+        raise PdfEngineError("pdfcraft_probe não retornou saída JSON.")
 
     try:
-        obj_txt = doc.xref_object(xref) or ""
-        js_pos = obj_txt.find("/JS")
-        if js_pos != -1:
-            paren_pos = obj_txt.find("(", js_pos)
-            if paren_pos != -1:
-                extracted = _extract_balanced_parens(obj_txt, paren_pos)
-                if extracted is not None:
-                    return extracted.strip()
-        return obj_txt.strip()
-    except Exception:
-        return ""
+        data = json.loads(raw_out)
+    except json.JSONDecodeError as exc:
+        raise PdfEngineError(f"Saída inválida do pdfcraft_probe: {exc}") from exc
+
+    if isinstance(data, dict) and data.get("ok") is False:
+        raise PdfEngineError(str(data.get("error") or "Erro desconhecido no motor PDF."))
+
+    return data
 
 
-def _extract_js_after_key(obj_str: str, key: str, doc: pymupdf.Document) -> List[str]:
-    """Extrai referências ou literais JS após uma chave como /JS ou /C."""
-    results: List[str] = []
-    search_from = 0
+def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
+    if not PROBE_EXE.exists():
+        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
 
-    while True:
-        idx = obj_str.find(key, search_from)
-        if idx == -1:
-            break
-        after = obj_str[idx + len(key):].lstrip()
-        search_from = idx + len(key)
-
-        ref_m = re.match(r"(\d+\s+\d+\s+R)", after)
-        if ref_m:
-            resolved = _resolve_js_from_ref(doc, ref_m.group(1))
-            if resolved:
-                results.append(resolved)
-            continue
-
-        # Caso seja dicionário << ... /JS ... >>
-        if after.startswith("<<"):
-            dict_end = after.find(">>")
-            if dict_end != -1:
-                sub = after[:dict_end]
-                results.extend(_extract_js_after_key(sub, "/JS", doc))
-            continue
-
-        # Caso seja string literal (...)
-        if after.startswith("("):
-            extracted = _extract_balanced_parens(after, 0)
-            if extracted is not None and extracted.strip():
-                results.append(extracted.strip())
-
-    return results
-
-
-def _extract_widget_script(doc: pymupdf.Document, widget: pymupdf.Widget) -> Optional[str]:
-    """Extrai script de cálculo/ação associado ao widget no PDF, se houver."""
-    direct_script = getattr(widget, "script", None) or getattr(widget, "script_calc", None)
-    if isinstance(direct_script, str) and direct_script.strip():
-        return direct_script.strip()
-
-    xref = getattr(widget, "xref", 0) or 0
-    if not xref:
-        return None
-
+    tmp_pdf: Optional[Path] = None
+    tmp_png: Optional[Path] = None
     try:
-        obj_str = doc.xref_object(xref) or ""
-    except Exception:
-        return None
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
+            pdf_f.write(pdf_bytes)
+            tmp_pdf = Path(pdf_f.name)
 
-    candidates: List[str] = []
-    candidates.extend(_extract_js_after_key(obj_str, "/C", doc))
-    candidates.extend(_extract_js_after_key(obj_str, "/JS", doc))
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as png_f:
+            tmp_png = Path(png_f.name)
 
-    if not candidates:
-        return None
+        cmd = [
+            str(PROBE_EXE),
+            "render",
+            "--page",
+            str(page_number),
+            "--dpi",
+            str(dpi),
+            "--out",
+            str(tmp_png),
+            str(tmp_pdf),
+        ]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
 
-    unique = list(dict.fromkeys(c for c in candidates if c))
-    return "\n".join(unique) if unique else None
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip() or f"Código de saída {proc.returncode}"
+            raise PdfEngineError(f"Falha ao renderizar PNG no pdfcraft_probe: {detail}")
 
+        if not tmp_png.exists() or tmp_png.stat().st_size == 0:
+            raise PdfEngineError("pdfcraft_probe não gerou o arquivo PNG esperado.")
 
-def _extract_doc_scripts(doc: pymupdf.Document) -> List[Dict[str, Any]]:
-    """Varre o documento em busca de scripts embutidos (ex.: JavaScript de cálculo)."""
-    scripts: List[Dict[str, Any]] = []
-    try:
-        count = doc.xref_length()
-    except Exception:
-        return scripts
-
-    for xref in range(1, count):
-        try:
-            obj_str = doc.xref_object(xref) or ""
-        except Exception:
-            continue
-
-        if "/JS" in obj_str or "JavaScript" in obj_str or "/S /JavaScript" in obj_str:
-            code_items = _extract_js_after_key(obj_str, "/JS", doc)
-            code = "\n".join(dict.fromkeys(code_items)).strip()
-
-            if not code:
+        return tmp_png.read_bytes()
+    except subprocess.TimeoutExpired as exc:
+        raise PdfEngineError("Tempo limite excedido ao renderizar página PDF.") from exc
+    finally:
+        for p in (tmp_pdf, tmp_png):
+            if p is not None and p.exists():
                 try:
-                    st = doc.xref_stream(xref)
-                    if st:
-                        code = st.decode("utf-8", errors="replace").strip()
-                except Exception:
+                    p.unlink()
+                except OSError:
                     pass
 
-            if code:
-                scripts.append({"xref": xref, "code": code})
 
-    return scripts
+def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
+    if not PROBE_EXE.exists():
+        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
+
+    tmp_pdf: Optional[Path] = None
+    tmp_json: Optional[Path] = None
+    tmp_out: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
+            pdf_f.write(pdf_bytes)
+            tmp_pdf = Path(pdf_f.name)
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as js_f:
+            json.dump(field_values or {}, js_f, ensure_ascii=False)
+            tmp_json = Path(js_f.name)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
+            tmp_out = Path(out_f.name)
+
+        cmd = [
+            str(PROBE_EXE),
+            "export",
+            "--fields-json",
+            str(tmp_json),
+            "--out",
+            str(tmp_out),
+            str(tmp_pdf),
+        ]
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
+
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip() or f"Código de saída {proc.returncode}"
+            raise PdfEngineError(f"Falha ao exportar PDF no pdfcraft_probe: {detail}")
+
+        if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+            raise PdfEngineError("pdfcraft_probe não gerou o arquivo PDF de saída.")
+
+        return tmp_out.read_bytes()
+    except subprocess.TimeoutExpired as exc:
+        raise PdfEngineError("Tempo limite excedido ao exportar PDF.") from exc
+    finally:
+        for p in (tmp_pdf, tmp_json, tmp_out):
+            if p is not None and p.exists():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+
+def _normalize_rect(raw_rect: Any) -> List[float]:
+    if not isinstance(raw_rect, list) or len(raw_rect) != 4:
+        return [0.0, 0.0, 0.0, 0.0]
+    vals: List[float] = []
+    for x in raw_rect:
+        try:
+            f = float(x)
+            vals.append(max(0.0, min(1.0, f)))
+        except (TypeError, ValueError):
+            return [0.0, 0.0, 0.0, 0.0]
+    return vals
 
 
 def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
-    """Lê o PDF em memória e extrai páginas, campos de formulário e scripts internos."""
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        pages_out: List[Dict[str, Any]] = []
+    """Inspeciona o PDF usando o pdfcraft_probe compilado em Rust."""
+    raw = _run_probe_json(pdf_bytes)
 
-        for page_index, page in enumerate(doc):
-            words = page.get_text("words")
-            vis_rect = page.rect
-            w_total = vis_rect.width if vis_rect.width else 1.0
-            h_total = vis_rect.height if vis_rect.height else 1.0
+    raw_pages = raw.get("pages") if isinstance(raw.get("pages"), list) else []
+    total_pages = int(raw.get("page_count") or len(raw_pages) or 0)
+    raw_fields = raw.get("fields") if isinstance(raw.get("fields"), list) else []
 
-            fields_out: List[Dict[str, Any]] = []
-            seen_keys = set()
+    page_dims: Dict[int, tuple[float, float]] = {}
+    for idx in range(total_pages):
+        p_num = idx + 1
+        p_entry = raw_pages[idx] if idx < len(raw_pages) and isinstance(raw_pages[idx], dict) else {}
+        w = float(p_entry.get("width") or 612.0)
+        h = float(p_entry.get("height") or 792.0)
+        page_dims[p_num] = (w, h)
 
-            for idx, widget in enumerate(page.widgets() or []):
-                if not _is_valid_widget(widget, vis_rect):
-                    continue
+    normalized_fields: List[Dict[str, Any]] = []
+    for idx, f in enumerate(raw_fields):
+        if not isinstance(f, dict):
+            continue
+        name = str(f.get("name") or f"field_{idx}")
+        kind = str(f.get("kind") or "Unknown")
+        widgets = f.get("widgets") if isinstance(f.get("widgets"), list) else []
 
-                r = widget.rect
-                norm_rect = [
-                    max(0.0, min(1.0, (r.x0 - vis_rect.x0) / w_total)),
-                    max(0.0, min(1.0, (r.y0 - vis_rect.y0) / h_total)),
-                    max(0.0, min(1.0, (r.x1 - vis_rect.x0) / w_total)),
-                    max(0.0, min(1.0, (r.y1 - vis_rect.y0) / h_total)),
-                ]
+        if widgets and isinstance(widgets[0], dict):
+            first_w = widgets[0]
+            page_val = first_w.get("page")
+            rect_val = _normalize_rect(first_w.get("rect"))
+        else:
+            page_val = f.get("page")
+            rect_val = _normalize_rect(f.get("rect"))
 
-                dedup_key = (
-                    widget.field_type_string,
-                    round(norm_rect[0], 4),
-                    round(norm_rect[1], 4),
-                    round(norm_rect[2], 4),
-                    round(norm_rect[3], 4),
-                )
-                if dedup_key in seen_keys:
-                    continue
-                seen_keys.add(dedup_key)
+        page_num: Optional[int]
+        if page_val is None:
+            page_num = None
+        else:
+            try:
+                page_num = int(page_val)
+            except (TypeError, ValueError):
+                page_num = None
 
-                raw_label = (widget.field_label or "").strip()
-                fallback_label = _find_nearby_label(words, r) if not raw_label else raw_label
-                label = fallback_label or widget.field_name or f"Campo {idx + 1}"
+        normalized_fields.append({
+            "id": f"f_{idx}",
+            "name": name,
+            "label": name,
+            "type": kind,
+            "page": page_num,
+            "value": f.get("value", ""),
+            "rect": rect_val,
+            "widgets": widgets,
+            "calc_script": f.get("calc_script"),
+        })
 
-                is_checkbox = widget.field_type_string == "CheckBox"
-                val: Any
-                if is_checkbox:
-                    val = bool(widget.field_value) and str(widget.field_value).lower() not in ("off", "false", "0", "")
-                else:
-                    val = "" if widget.field_value is None else str(widget.field_value)
+    pages_out: List[Dict[str, Any]] = []
+    for p_idx in range(total_pages):
+        p_num = p_idx + 1
+        w, h = page_dims.get(p_num, (612.0, 792.0))
+        page_fields = [
+            fld for fld in normalized_fields
+            if fld.get("page") == p_num or (fld.get("page") is None and p_idx == 0)
+        ]
+        pages_out.append({
+            "page": p_num,
+            "width": w,
+            "height": h,
+            "fields": page_fields,
+        })
 
-                calc_script = _extract_widget_script(doc, widget)
+    if not pages_out and normalized_fields:
+        pages_out.append({
+            "page": 1,
+            "width": 612.0,
+            "height": 792.0,
+            "fields": normalized_fields,
+        })
 
-                fields_out.append({
-                    "id": f"p{page_index + 1}_f{idx}",
-                    "name": widget.field_name or f"field_{page_index + 1}_{idx}",
-                    "label": label,
-                    "type": widget.field_type_string,
-                    "value": val,
-                    "rect": norm_rect,
-                    "calc_script": calc_script,
-                })
-
-            pages_out.append({
-                "page": page_index + 1,
-                "width": w_total,
-                "height": h_total,
-                "fields": fields_out,
-            })
-
-        doc_scripts = _extract_doc_scripts(doc)
-        total_pages = len(doc)
-
-        return {
-            "total_pages": total_pages,
-            "has_form_fields": any(len(p["fields"]) > 0 for p in pages_out),
-            "doc_scripts": doc_scripts,
-            "pages": pages_out,
-        }
-    finally:
-        doc.close()
+    return {
+        "total_pages": total_pages,
+        "has_form_fields": len(normalized_fields) > 0,
+        "doc_scripts": [],
+        "pages": pages_out,
+        "fields": normalized_fields,
+    }
 
 
 def render_page_png(pdf_bytes: bytes, page_number: int, dpi: int = 150) -> bytes:
-    """Renderiza uma página específica (1-based) em PNG."""
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        idx = max(0, min(page_number - 1, len(doc) - 1))
-        page = doc[idx]
-        pix = page.get_pixmap(dpi=dpi)
-        return pix.tobytes("png")
-    finally:
-        doc.close()
+    """Renderiza uma página específica (1-based) em PNG via pdfcraft_probe."""
+    return _run_probe_render(pdf_bytes, page_number=page_number, dpi=dpi)
 
 
 def build_filled_pdf(
@@ -310,64 +281,6 @@ def build_filled_pdf(
     strokes: Optional[List[Dict[str, Any]]] = None,
     flatten: bool = True,
 ) -> bytes:
-    """Aplica valores nos campos, textos livres e traços, retornando os bytes do PDF final."""
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        free_texts = free_texts or []
-        strokes = strokes or []
-
-        for page_index, page in enumerate(doc):
-            page_num = page_index + 1
-            vis_rect = page.rect
-
-            for idx, widget in enumerate(page.widgets() or []):
-                if not _is_valid_widget(widget, vis_rect):
-                    continue
-
-                field_id = f"p{page_num}_f{idx}"
-                key = field_id if field_id in field_values else widget.field_name
-                if key in field_values:
-                    val = field_values[key]
-                    if widget.field_type_string == "CheckBox":
-                        widget.field_value = bool(val)
-                    else:
-                        widget.field_value = "" if val is None else str(val)
-                    widget.update()
-
-            for item in free_texts:
-                if int(item.get("page", 0)) != page_num:
-                    continue
-                text = (item.get("text") or "").strip()
-                if not text:
-                    continue
-                x_norm = float(item.get("x", 0.1))
-                y_norm = float(item.get("y", 0.1))
-                font_size = float(item.get("font_size", 11))
-
-                pt = pymupdf.Point(
-                    vis_rect.x0 + x_norm * vis_rect.width,
-                    vis_rect.y0 + y_norm * vis_rect.height,
-                )
-                page.insert_text(pt, text, fontsize=font_size)
-
-            for stk in strokes:
-                if int(stk.get("page", 0)) != page_num:
-                    continue
-                pts = stk.get("points") or []
-                if len(pts) < 2:
-                    continue
-                pdf_pts = [
-                    pymupdf.Point(
-                        vis_rect.x0 + float(p.get("x", 0.0)) * vis_rect.width,
-                        vis_rect.y0 + float(p.get("y", 0.0)) * vis_rect.height,
-                    )
-                    for p in pts
-                ]
-                page.draw_polyline(pdf_pts, color=(0.11, 0.31, 0.85), width=1.8)
-
-        if flatten:
-            doc.bake()
-
-        return doc.tobytes(garbage=3, deflate=True)
-    finally:
-        doc.close()
+    """Aplica valores de campos e recálculos via motor Rust pdfcraft_probe."""
+    _ = (free_texts, strokes, flatten)
+    return _run_probe_export(pdf_bytes, field_values=field_values)

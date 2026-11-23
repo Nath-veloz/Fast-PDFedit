@@ -9,10 +9,11 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+serde_json = { workspace = true }
 craft-docpath = { workspace = true }
 craft-image-codecs = { workspace = true }
 pdfcraft-measure = { workspace = true }
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
 pdfcraft-render = { workspace = true }
 pdfcraft-cos = { workspace = true }
 pdfcraft-organize = { workspace = true }
@@ -66,3 +67,7 @@ craft-tiff = { workspace = true }
 pdfcraft-testkit = { workspace = true }
 # JBIG2 fixtures (`encode_jbig2_generic`).
 pdfcraft-filters = { workspace = true }
+
+[[bin]]
+name = "pdfcraft_probe"
+path = "src/bin/pdfcraft_probe.rs"
