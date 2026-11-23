@@ -81,6 +81,16 @@ function normalizeFieldValueForCompare(type, val) {
   return String(val ?? "");
 }
 
+function closeServerSession(fileId) {
+  if (!fileId) return;
+  const url = `/api/session/${encodeURIComponent(fileId)}`;
+  try {
+    fetch(url, { method: "DELETE", keepalive: true }).catch(() => {});
+  } catch (_) {
+    // Ignora falhas de rede no fechamento
+  }
+}
+
 function indexFieldsMetadata() {
   state.fieldMeta = {};
   state.nameToFieldIds = {};
@@ -148,7 +158,7 @@ function syncDomInputsWithState(changedIds) {
   }
 }
 
-async function evaluateWithEngine({ rerenderPage = true, onlyDirty = true } = {}) {
+async function evaluateWithEngine({ rerenderPage = false, onlyDirty = true } = {}) {
   if (!state.fileId) return;
 
   const payloadFields = buildPayloadByFieldName({ onlyDirty });
@@ -308,6 +318,7 @@ els.saveBtn.addEventListener("click", () => saveProgress(true));
 els.backBtn.addEventListener("click", () => {
   clearTimeout(state.evalTimer);
   saveProgress(false);
+  closeServerSession(state.fileId);
   state.fileId = null;
   els.backBtn.classList.add("hidden");
   els.toolbarCenter.classList.add("hidden");
@@ -357,9 +368,10 @@ function undoLastAction() {
 async function handleFileSelected(file) {
   if (!file) return;
   clearTimeout(state.evalTimer);
-  state.evalInFlight = false;
-  state.evalPending = false;
-  state.evalRerenderPending = false;
+  if (state.fileId) {
+    closeServerSession(state.fileId);
+    state.fileId = null;
+  }
 
   els.statusText.textContent = "Carregando documento...";
   els.exportBtn.disabled = true;
@@ -682,7 +694,11 @@ els.drawCanvas.addEventListener("mousemove", moveDraw);
 window.addEventListener("mouseup", endDraw);
 els.drawCanvas.addEventListener("touchstart", startDraw, { passive: false });
 els.drawCanvas.addEventListener("touchmove", moveDraw, { passive: false });
-window.addEventListener("touchend", endDraw);
+window.addEventListener("beforeunload", () => {
+  if (state.fileId) {
+    closeServerSession(state.fileId);
+  }
+});
 
 function redrawStrokesCanvas() {
   const ctx = els.drawCanvas.getContext("2d");

@@ -147,10 +147,23 @@ def api_render(req: RenderRequest) -> Response:
 def api_evaluate(req: EvaluateRequest) -> Dict[str, Any]:
     entry = _get_entry_or_404(req.file_id)
     try:
-        updated_fields, _ = evaluate_fields(entry["bytes"], field_values=req.fields)
+        updated_fields, updated_pdf = evaluate_fields(entry["bytes"], field_values=req.fields)
     except PdfEngineError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    with STORE_LOCK:
+        if req.file_id in PDF_STORE:
+            PDF_STORE[req.file_id]["bytes"] = updated_pdf
+            PDF_STORE[req.file_id]["created_at"] = time.time()
+
     return {"ok": True, "fields": updated_fields}
+
+
+@app.delete("/api/session/{file_id}")
+def api_close_session(file_id: str) -> Dict[str, Any]:
+    with STORE_LOCK:
+        removed = PDF_STORE.pop(file_id, None) is not None
+    return {"ok": True, "removed": removed}
 
 
 @app.post("/api/export")

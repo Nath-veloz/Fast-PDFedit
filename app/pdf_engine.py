@@ -123,6 +123,7 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
 
     tmp_pdf: Optional[Path] = None
     tmp_json: Optional[Path] = None
+    tmp_out: Optional[Path] = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
             pdf_f.write(pdf_bytes)
@@ -132,11 +133,16 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
             json.dump(field_values or {}, js_f, ensure_ascii=False, separators=(",", ":"))
             tmp_json = Path(js_f.name)
 
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
+            tmp_out = Path(out_f.name)
+
         cmd = [
             str(PROBE_EXE),
             "eval",
             "--fields-json",
             str(tmp_json),
+            "--out",
+            str(tmp_out),
             str(tmp_pdf),
         ]
         proc = subprocess.run(
@@ -166,14 +172,17 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
         if isinstance(payload, dict) and payload.get("ok") is False:
             raise PdfEngineError(str(payload.get("error") or "Erro desconhecido no motor PDF."))
 
+        if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+            raise PdfEngineError("pdfcraft_probe eval não gerou o arquivo PDF de saída.")
+
         fields_out = payload.get("fields") if isinstance(payload, dict) and isinstance(payload.get("fields"), dict) else {}
-        return fields_out, pdf_bytes
+        return fields_out, tmp_out.read_bytes()
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao avaliar campos no PDF.") from exc
     finally:
         _safe_unlink(tmp_pdf)
         _safe_unlink(tmp_json)
-
+        _safe_unlink(tmp_out)
 
 def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
     _ensure_probe_exists()
