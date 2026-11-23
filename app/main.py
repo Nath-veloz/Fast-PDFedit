@@ -9,7 +9,13 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.pdf_engine import build_filled_pdf, inspect_pdf, render_page_png
+from app.pdf_engine import (
+    PdfEngineError,
+    build_filled_pdf,
+    evaluate_fields,
+    inspect_pdf,
+    render_page_png,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -28,6 +34,11 @@ class RenderRequest(BaseModel):
     file_id: str
     page: int = 1
     dpi: int = 150
+
+
+class EvaluateRequest(BaseModel):
+    file_id: str
+    fields: Dict[str, Any] = {}
 
 
 class FreeTextItem(BaseModel):
@@ -118,6 +129,17 @@ def api_render(req: RenderRequest) -> Response:
     safe_dpi = max(72, min(req.dpi, 220))
     png_bytes = render_page_png(entry["bytes"], page_number=req.page, dpi=safe_dpi)
     return Response(content=png_bytes, media_type="image/png")
+
+
+@app.post("/api/evaluate")
+def api_evaluate(req: EvaluateRequest) -> Dict[str, Any]:
+    entry = _get_entry_or_404(req.file_id)
+    try:
+        updated_fields, updated_pdf = evaluate_fields(entry["bytes"], field_values=req.fields)
+    except PdfEngineError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    entry["bytes"] = updated_pdf
+    return {"ok": True, "fields": updated_fields}
 
 
 @app.post("/api/export")

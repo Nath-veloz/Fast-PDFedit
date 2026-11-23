@@ -1,3 +1,7 @@
+// ============================================================================
+// 1. ESTADO E REFERÊNCIAS DE DOM
+// ============================================================================
+
 const state = {
   fileId: null,
   filename: "",
@@ -7,15 +11,20 @@ const state = {
   docScripts: [],
   zoom: 1.0,
   tool: "fields", // "fields" | "text" | "draw"
-  fieldValues: {},
+  fieldValues: {}, // field.id -> valor atual
   fieldMeta: {}, // field.id -> { id, name, label, type, calc_script, page }
-  keyToFieldIds: {}, // chave normalizada (name/label/id) -> [field.id]
+  nameToFieldIds: {}, // field.name -> [field.id]
+  lastEngineByName: {}, // field.name -> último valor conhecido pelo motor
   freeTexts: [], // { id, page, x, y, text, font_size }
   strokes: [], // { id, page, points: [{ x, y }] }
   history: [], // { type: "text" | "stroke", id }
   isDrawing: false,
   currentStroke: null,
   autosaveTimer: null,
+  evalTimer: null,
+  evalInFlight: false,
+  evalPending: false,
+  evalRerenderPending: false,
 };
 
 let lastPageUrl = null;
@@ -63,145 +72,64 @@ const els = {
   mUndo: document.getElementById("mUndo"),
 };
 
-function normalizeKey(str) {
-  return String(str || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
+// ============================================================================
+// 2. AVALIAÇÃO E RECÁLCULO VIA MOTOR RUST (/api/evaluate)
+// ============================================================================
 
-function toNumber(val) {
-  if (typeof val === "number") return Number.isFinite(val) ? val : 0;
-  if (typeof val === "boolean") return val ? 1 : 0;
-  const cleaned = String(val ?? "")
-    .replace(",", ".")
-    .replace(/[^0-9.-]+/g, " ")
-    .trim()
-    .split(/\s+/)[0];
-  const n = parseFloat(cleaned);
-  return Number.isFinite(n) ? n : 0;
+function normalizeFieldValueForCompare(type, val) {
+  if (type === "CheckBox") return Boolean(val);
+  return String(val ?? "");
 }
 
 function indexFieldsMetadata() {
   state.fieldMeta = {};
-  state.keyToFieldIds = {};
+  state.nameToFieldIds = {};
+  state.lastEngineByName = {};
 
   for (const p of state.pages || []) {
     for (const f of p.fields || []) {
       state.fieldMeta[f.id] = { ...f, page: p.page };
-      const candidates = [f.id, f.name, f.label];
-      for (const cand of candidates) {
-        const k = normalizeKey(cand);
-        if (!k) continue;
-        if (!state.keyToFieldIds[k]) state.keyToFieldIds[k] = [];
-        if (!state.keyToFieldIds[k].includes(f.id)) {
-          state.keyToFieldIds[k].push(f.id);
+      const fname = String(f.name || "");
+      if (fname) {
+        if (!state.nameToFieldIds[fname]) state.nameToFieldIds[fname] = [];
+        if (!state.nameToFieldIds[fname].includes(f.id)) {
+          state.nameToFieldIds[fname].push(f.id);
+        }
+        if (!(fname in state.lastEngineByName)) {
+          state.lastEngineByName[fname] = normalizeFieldValueForCompare(f.type, f.value);
         }
       }
     }
   }
 }
 
-function getFieldValueByKey(rawKey) {
-  const k = normalizeKey(rawKey);
-  const ids = state.keyToFieldIds[k];
-  if (!ids || !ids.length) return 0;
-  const meta = state.fieldMeta[ids[0]];
-  const rawVal = state.fieldValues[ids[0]];
-  if (meta?.type === "CheckBox") return Boolean(rawVal) ? 1 : 0;
-  return toNumber(rawVal);
-}
+function buildPayloadByFieldName({ onlyDirty = false } = {}) {
+  const out = {};
+  const grouped = {};
 
-function safeEvalMathExpr(expr) {
-  const candidate = expr
-    .replace(/\bMath\.(floor|ceil|round|abs|max|min)\b/g, "__MATH_$1__")
-    .replace(/\b(floor|ceil|round|abs|max|min)\b/g, "__MATH_$1__");
-
-  const stripped = candidate
-    .replace(/__MATH_(floor|ceil|round|abs|max|min)__/g, "")
-    .replace(/[0-9+\-*/().,\s]/g, "");
-
-  if (stripped.length > 0) return null;
-
-  const jsExpr = candidate.replace(/__MATH_(floor|ceil|round|abs|max|min)__/g, "Math.$1");
-  try {
-    // eslint-disable-next-line no-new-func
-    const fn = new Function(`"use strict"; return (${jsExpr});`);
-    const res = fn();
-    if (typeof res === "number" && Number.isFinite(res)) {
-      return Number.isInteger(res) ? String(res) : String(Number(res.toFixed(2)));
-    }
-    return null;
-  } catch (_) {
-    return null;
+  for (const [fid, meta] of Object.entries(state.fieldMeta)) {
+    const fname = String(meta?.name || "");
+    if (!fname) continue;
+    const normVal = normalizeFieldValueForCompare(meta.type, state.fieldValues[fid]);
+    grouped[fname] = normVal;
   }
-}
 
-function inferAttributeModifier(targetField) {
-  const key = normalizeKey(targetField.name || targetField.label || "");
-  const modMatch =
-    key.match(/^(?:mod_?|modificador_?(?:de)?_?)([a-z0-9]+)$/) ||
-    key.match(/^([a-z0-9]+)_?(?:mod|modificador)$/);
-  if (!modMatch) return null;
-
-  const attrKey = modMatch[1];
-  const attrIds = state.keyToFieldIds[attrKey];
-  if (!attrIds || !attrIds.length || attrIds.includes(targetField.id)) return null;
-
-  const attrVal = toNumber(state.fieldValues[attrIds[0]]);
-  return String(Math.floor((attrVal - 10) / 2));
-}
-
-function evaluateCalcScriptForTarget(script, targetField) {
-  if (!script || typeof script !== "string") return null;
-
-  const afMatch = script.match(
-    /AFSimple_Calculate\s*\(\s*["']([A-Z]+)["']\s*,\s*\[([^\]]*)\]\s*\)/i
-  );
-  if (afMatch) {
-    const mode = afMatch[1].toUpperCase();
-    const fieldNames = Array.from(afMatch[2].matchAll(/["']([^"']+)["']/g)).map((m) => m[1]);
-    const nums = fieldNames.map((name) => getFieldValueByKey(name));
-    if (!nums.length) return null;
-    if (mode === "SUM") return String(nums.reduce((a, b) => a + b, 0));
-    if (mode === "PRD") return String(nums.reduce((a, b) => a * b, 1));
-    if (mode === "AVG") {
-      return String(Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2)));
+  for (const [fname, normVal] of Object.entries(grouped)) {
+    if (!onlyDirty) {
+      out[fname] = normVal;
+      continue;
+    }
+    const prevKnown = state.lastEngineByName[fname];
+    if (prevKnown !== normVal) {
+      out[fname] = normVal;
     }
   }
 
-  let expr = script;
-  const assignMatch = script.match(/event\.value\s*=\s*([\s\S]*?)(?:;|$)/);
-  if (assignMatch) {
-    expr = assignMatch[1].trim();
-  } else if (/function\s*\(/.test(script) || /\bif\s*\(/.test(script)) {
-    return null;
-  }
-
-  expr = expr.replace(
-    /(?:this\.)?getField\s*\(\s*["']([^"']+)["']\s*\)(?:\.value)?/g,
-    (_, fieldName) => String(getFieldValueByKey(fieldName))
-  );
-
-  const selfId = targetField.id;
-  expr = expr.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g, (token) => {
-    if (["Math", "floor", "ceil", "round", "abs", "max", "min", "event", "value"].includes(token)) {
-      return token;
-    }
-    const ids = state.keyToFieldIds[normalizeKey(token)];
-    if (ids && ids.length && !ids.includes(selfId)) {
-      return String(getFieldValueByKey(token));
-    }
-    return token;
-  });
-
-  return safeEvalMathExpr(expr);
+  return out;
 }
 
 function syncDomInputsWithState(changedIds) {
-  if (!changedIds.size) return;
+  if (!changedIds || !changedIds.size) return;
   const activeEl = document.activeElement;
   const inputs = els.widgetsLayer.querySelectorAll("[data-field-id]");
   for (const el of inputs) {
@@ -220,36 +148,105 @@ function syncDomInputsWithState(changedIds) {
   }
 }
 
-function recalculateFields(maxPasses = 3) {
-  const allFields = Object.values(state.fieldMeta);
-  if (!allFields.length) return;
+async function evaluateWithEngine({ rerenderPage = true, onlyDirty = true } = {}) {
+  if (!state.fileId) return;
 
-  const updatedIds = new Set();
-
-  for (let pass = 0; pass < maxPasses; pass++) {
-    let anyChanged = false;
-    for (const f of allFields) {
-      if (f.type === "CheckBox") continue;
-
-      let computed = null;
-      if (f.calc_script) {
-        computed = evaluateCalcScriptForTarget(f.calc_script, f);
-      }
-      if (computed === null) {
-        computed = inferAttributeModifier(f);
-      }
-
-      if (computed !== null && String(state.fieldValues[f.id] ?? "") !== computed) {
-        state.fieldValues[f.id] = computed;
-        updatedIds.add(f.id);
-        anyChanged = true;
-      }
-    }
-    if (!anyChanged) break;
+  const payloadFields = buildPayloadByFieldName({ onlyDirty });
+  if (onlyDirty && Object.keys(payloadFields).length === 0) {
+    return;
   }
 
-  syncDomInputsWithState(updatedIds);
+  if (state.evalInFlight) {
+    state.evalPending = true;
+    state.evalRerenderPending = state.evalRerenderPending || rerenderPage;
+    return;
+  }
+
+  state.evalInFlight = true;
+  state.evalPending = false;
+  const shouldRerender = rerenderPage || state.evalRerenderPending;
+  state.evalRerenderPending = false;
+
+  try {
+    const res = await fetch("/api/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_id: state.fileId,
+        fields: payloadFields,
+      }),
+    });
+
+    const rawText = await res.text();
+    if (!res.ok) {
+      console.warn("Falha no /api/evaluate:", res.status, rawText);
+      return;
+    }
+
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (_) {
+      console.warn("Resposta não-JSON em /api/evaluate:", rawText);
+      return;
+    }
+
+    const engineFields = data?.fields;
+    if (!engineFields || typeof engineFields !== "object") return;
+
+    const activeFid = document.activeElement?.getAttribute?.("data-field-id") || null;
+    const changedIds = new Set();
+
+    for (const [fname, rawVal] of Object.entries(engineFields)) {
+      const fids = state.nameToFieldIds[fname] || [];
+      const firstMeta = fids.length ? state.fieldMeta[fids[0]] : null;
+      const engineNorm = normalizeFieldValueForCompare(firstMeta?.type, rawVal);
+      state.lastEngineByName[fname] = engineNorm;
+
+      for (const fid of fids) {
+        if (fid === activeFid) continue;
+        const meta = state.fieldMeta[fid];
+        const nextVal = normalizeFieldValueForCompare(meta?.type, rawVal);
+        const prevVal = normalizeFieldValueForCompare(meta?.type, state.fieldValues[fid]);
+
+        if (nextVal !== prevVal) {
+          state.fieldValues[fid] = nextVal;
+          changedIds.add(fid);
+        }
+      }
+    }
+
+    if (changedIds.size > 0) {
+      syncDomInputsWithState(changedIds);
+      scheduleAutosave();
+      if (shouldRerender) {
+        await loadAndRenderPage();
+      }
+    }
+  } catch (err) {
+    console.warn("Erro ao avaliar campos:", err);
+  } finally {
+    state.evalInFlight = false;
+    if (state.evalPending) {
+      const nextRerender = state.evalRerenderPending;
+      state.evalPending = false;
+      state.evalRerenderPending = false;
+      await evaluateWithEngine({ rerenderPage: nextRerender, onlyDirty: true });
+    }
+  }
 }
+
+function scheduleEvaluate(delayMs = 220) {
+  if (!state.fileId) return;
+  clearTimeout(state.evalTimer);
+  state.evalTimer = setTimeout(() => {
+    evaluateWithEngine({ rerenderPage: true, onlyDirty: true });
+  }, delayMs);
+}
+
+// ============================================================================
+// 3. PERSISTÊNCIA LOCAL (RASCUNHO) E TOASTS
+// ============================================================================
 
 function showToast(msg) {
   els.toastBanner.textContent = msg;
@@ -308,6 +305,7 @@ function loadSavedProgress() {
 els.saveBtn.addEventListener("click", () => saveProgress(true));
 
 els.backBtn.addEventListener("click", () => {
+  clearTimeout(state.evalTimer);
   saveProgress(false);
   state.fileId = null;
   els.backBtn.classList.add("hidden");
@@ -323,6 +321,10 @@ els.backBtn.addEventListener("click", () => {
   els.pdfInput.value = "";
   els.pdfInputEmpty.value = "";
 });
+
+// ============================================================================
+// 4. ABERTURA DE PDF, NAVEGAÇÃO, ZOOM E FERRAMENTAS
+// ============================================================================
 
 function pushHistory(action) {
   state.history.push(action);
@@ -353,6 +355,11 @@ function undoLastAction() {
 
 async function handleFileSelected(file) {
   if (!file) return;
+  clearTimeout(state.evalTimer);
+  state.evalInFlight = false;
+  state.evalPending = false;
+  state.evalRerenderPending = false;
+
   els.statusText.textContent = "Carregando documento...";
   els.exportBtn.disabled = true;
 
@@ -384,7 +391,6 @@ async function handleFileSelected(file) {
 
     indexFieldsMetadata();
     const restored = loadSavedProgress();
-    recalculateFields();
 
     els.fileNameLabel.textContent = state.filename;
     els.totalPagesLabel.textContent = String(state.totalPages);
@@ -399,13 +405,15 @@ async function handleFileSelected(file) {
     els.emptyState.classList.add("hidden");
     els.pageStage.classList.remove("hidden");
     els.exportBtn.disabled = false;
-
-    if (restored) {
-      showToast("Rascunho anterior restaurado.");
-    }
+    els.statusText.textContent = "";
 
     setTool("fields");
     await loadAndRenderPage();
+
+    if (restored) {
+      showToast("Rascunho anterior restaurado.");
+      void evaluateWithEngine({ rerenderPage: true, onlyDirty: true });
+    }
   } catch (err) {
     els.statusText.textContent = `Erro: ${err.message}`;
   }
@@ -516,6 +524,10 @@ async function loadAndRenderPage() {
   els.pageImage.src = nextUrl;
 }
 
+// ============================================================================
+// 5. WIDGETS DO FORMULÁRIO, TEXTO LIVRE, DESENHO E EXPORTAÇÃO
+// ============================================================================
+
 function applyStageLayout() {
   const pageObj = state.pages.find((p) => p.page === state.currentPage);
   const baseWidth = pageObj?.width || 595;
@@ -559,8 +571,8 @@ function renderWidgetsOverlay(w, h, fields) {
       cb.style.height = `${boxSize}px`;
       cb.addEventListener("change", () => {
         state.fieldValues[f.id] = cb.checked;
-        recalculateFields();
         scheduleAutosave();
+        scheduleEvaluate(60);
       });
       els.widgetsLayer.appendChild(cb);
     } else {
@@ -578,8 +590,11 @@ function renderWidgetsOverlay(w, h, fields) {
       inp.style.textAlign = width <= 45 ? "center" : "left";
       inp.addEventListener("input", () => {
         state.fieldValues[f.id] = inp.value;
-        recalculateFields();
         scheduleAutosave();
+        scheduleEvaluate(220);
+      });
+      inp.addEventListener("blur", () => {
+        scheduleEvaluate(0);
       });
       els.widgetsLayer.appendChild(inp);
     }
@@ -692,7 +707,8 @@ function redrawStrokesCanvas() {
 
 els.exportBtn.addEventListener("click", async () => {
   if (!state.fileId) return;
-  recalculateFields();
+  clearTimeout(state.evalTimer);
+  await evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
   saveProgress(false);
   els.exportBtn.disabled = true;
   const prev = els.exportBtn.textContent;
@@ -704,7 +720,7 @@ els.exportBtn.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         file_id: state.fileId,
-        fields: state.fieldValues,
+        fields: buildPayloadByFieldName({ onlyDirty: false }),
         free_texts: state.freeTexts,
         strokes: state.strokes,
         flatten: els.flattenCheckbox.checked,
