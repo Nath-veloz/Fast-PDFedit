@@ -13,9 +13,21 @@ class PdfEngineError(RuntimeError):
     """Erro retornado pelo motor Rust pdfcraft-engine."""
 
 
-def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[str, Any]:
+def _ensure_probe_exists() -> None:
     if not PROBE_EXE.exists():
         raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
+
+
+def _safe_unlink(path: Optional[Path]) -> None:
+    if path is not None and path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[str, Any]:
+    _ensure_probe_exists()
 
     tmp_path: Optional[Path] = None
     try:
@@ -35,11 +47,7 @@ def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao executar o motor PDF.") from exc
     finally:
-        if tmp_path is not None and tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+        _safe_unlink(tmp_path)
 
     raw_out = (proc.stdout or "").strip()
     raw_err = (proc.stderr or "").strip()
@@ -63,8 +71,7 @@ def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[
 
 
 def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
-    if not PROBE_EXE.exists():
-        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
+    _ensure_probe_exists()
 
     tmp_pdf: Optional[Path] = None
     tmp_png: Optional[Path] = None
@@ -107,40 +114,29 @@ def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao renderizar página PDF.") from exc
     finally:
-        for p in (tmp_pdf, tmp_png):
-            if p is not None and p.exists():
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+        _safe_unlink(tmp_pdf)
+        _safe_unlink(tmp_png)
 
 
 def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dict[str, Any], bytes]:
-    if not PROBE_EXE.exists():
-        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
+    _ensure_probe_exists()
 
     tmp_pdf: Optional[Path] = None
     tmp_json: Optional[Path] = None
-    tmp_out: Optional[Path] = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
             pdf_f.write(pdf_bytes)
             tmp_pdf = Path(pdf_f.name)
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as js_f:
-            json.dump(field_values or {}, js_f, ensure_ascii=False)
+            json.dump(field_values or {}, js_f, ensure_ascii=False, separators=(",", ":"))
             tmp_json = Path(js_f.name)
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
-            tmp_out = Path(out_f.name)
 
         cmd = [
             str(PROBE_EXE),
             "eval",
             "--fields-json",
             str(tmp_json),
-            "--out",
-            str(tmp_out),
             str(tmp_pdf),
         ]
         proc = subprocess.run(
@@ -170,25 +166,17 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
         if isinstance(payload, dict) and payload.get("ok") is False:
             raise PdfEngineError(str(payload.get("error") or "Erro desconhecido no motor PDF."))
 
-        if not tmp_out.exists() or tmp_out.stat().st_size == 0:
-            raise PdfEngineError("pdfcraft_probe eval não gerou o arquivo PDF de saída.")
-
         fields_out = payload.get("fields") if isinstance(payload, dict) and isinstance(payload.get("fields"), dict) else {}
-        return fields_out, tmp_out.read_bytes()
+        return fields_out, pdf_bytes
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao avaliar campos no PDF.") from exc
     finally:
-        for p in (tmp_pdf, tmp_json, tmp_out):
-            if p is not None and p.exists():
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+        _safe_unlink(tmp_pdf)
+        _safe_unlink(tmp_json)
 
 
 def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
-    if not PROBE_EXE.exists():
-        raise PdfEngineError(f"Binário do motor não encontrado em: {PROBE_EXE}")
+    _ensure_probe_exists()
 
     tmp_pdf: Optional[Path] = None
     tmp_json: Optional[Path] = None
@@ -199,7 +187,7 @@ def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
             tmp_pdf = Path(pdf_f.name)
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as js_f:
-            json.dump(field_values or {}, js_f, ensure_ascii=False)
+            json.dump(field_values or {}, js_f, ensure_ascii=False, separators=(",", ":"))
             tmp_json = Path(js_f.name)
 
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
@@ -234,12 +222,9 @@ def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao exportar PDF.") from exc
     finally:
-        for p in (tmp_pdf, tmp_json, tmp_out):
-            if p is not None and p.exists():
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+        _safe_unlink(tmp_pdf)
+        _safe_unlink(tmp_json)
+        _safe_unlink(tmp_out)
 
 
 def _normalize_rect(raw_rect: Any) -> List[float]:
@@ -271,7 +256,9 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
         h = float(p_entry.get("height") or 792.0)
         page_dims[p_num] = (w, h)
 
+    fields_by_page: Dict[int, List[Dict[str, Any]]] = {p + 1: [] for p in range(total_pages)}
     normalized_fields: List[Dict[str, Any]] = []
+
     for idx, f in enumerate(raw_fields):
         if not isinstance(f, dict):
             continue
@@ -296,7 +283,7 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
             except (TypeError, ValueError):
                 page_num = None
 
-        normalized_fields.append({
+        norm_field = {
             "id": f"f_{idx}",
             "name": name,
             "label": name,
@@ -306,21 +293,22 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
             "rect": rect_val,
             "widgets": widgets,
             "calc_script": f.get("calc_script"),
-        })
+        }
+        normalized_fields.append(norm_field)
+
+        target_page = page_num if page_num in fields_by_page else (1 if 1 in fields_by_page else None)
+        if target_page is not None:
+            fields_by_page[target_page].append(norm_field)
 
     pages_out: List[Dict[str, Any]] = []
     for p_idx in range(total_pages):
         p_num = p_idx + 1
         w, h = page_dims.get(p_num, (612.0, 792.0))
-        page_fields = [
-            fld for fld in normalized_fields
-            if fld.get("page") == p_num or (fld.get("page") is None and p_idx == 0)
-        ]
         pages_out.append({
             "page": p_num,
             "width": w,
             "height": h,
-            "fields": page_fields,
+            "fields": fields_by_page.get(p_num, []),
         })
 
     if not pages_out and normalized_fields:

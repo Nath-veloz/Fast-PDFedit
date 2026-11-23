@@ -236,11 +236,12 @@ async function evaluateWithEngine({ rerenderPage = true, onlyDirty = true } = {}
   }
 }
 
+// Em scheduleEvaluate (padrão rerenderPage = false):
 function scheduleEvaluate(delayMs = 220) {
   if (!state.fileId) return;
   clearTimeout(state.evalTimer);
   state.evalTimer = setTimeout(() => {
-    evaluateWithEngine({ rerenderPage: true, onlyDirty: true });
+    evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
   }, delayMs);
 }
 
@@ -410,9 +411,10 @@ async function handleFileSelected(file) {
     setTool("fields");
     await loadAndRenderPage();
 
+    // Na restauração de rascunho em handleFileSelected:
     if (restored) {
       showToast("Rascunho anterior restaurado.");
-      void evaluateWithEngine({ rerenderPage: true, onlyDirty: true });
+      void evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
     }
   } catch (err) {
     els.statusText.textContent = `Erro: ${err.message}`;

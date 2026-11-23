@@ -1,5 +1,6 @@
 from pathlib import Path
 import re
+from threading import Lock
 import time
 from typing import Any, Dict, List
 from uuid import uuid4
@@ -25,6 +26,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Cache temporário em memória: file_id -> {"bytes": bytes, "filename": str, "created_at": float}
 PDF_STORE: Dict[str, Dict[str, Any]] = {}
+STORE_LOCK = Lock()
 MAX_STORED_FILES = 50
 TTL_SECONDS = 3600  # 1 hora
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
@@ -67,8 +69,7 @@ class ExportRequest(BaseModel):
     flatten: bool = True
 
 
-def _cleanup_store() -> None:
-    now = time.time()
+def _cleanup_store_locked(now: float) -> None:
     expired = [k for k, v in PDF_STORE.items() if now - v["created_at"] > TTL_SECONDS]
     for k in expired:
         del PDF_STORE[k]
@@ -79,12 +80,14 @@ def _cleanup_store() -> None:
 
 
 def _get_entry_or_404(file_id: str) -> Dict[str, Any]:
-    _cleanup_store()
-    entry = PDF_STORE.get(file_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Arquivo não encontrado ou sessão expirada.")
-    entry["created_at"] = time.time()
-    return entry
+    now = time.time()
+    with STORE_LOCK:
+        _cleanup_store_locked(now)
+        entry = PDF_STORE.get(file_id)
+        if not entry:
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado ou sessão expirada.")
+        entry["created_at"] = now
+        return entry
 
 
 def _safe_download_name(original_name: str) -> str:
@@ -100,7 +103,6 @@ def serve_index() -> FileResponse:
 
 @app.post("/api/inspect")
 async def api_inspect(file: UploadFile = File(...)) -> Dict[str, Any]:
-    _cleanup_store()
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Envie um arquivo PDF válido.")
 
@@ -111,15 +113,22 @@ async def api_inspect(file: UploadFile = File(...)) -> Dict[str, Any]:
     if len(pdf_bytes) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(status_code=413, detail="O arquivo PDF excede o limite de 25 MB.")
 
-    file_id = str(uuid4())
-    PDF_STORE[file_id] = {
-        "bytes": pdf_bytes,
-        "filename": file.filename,
-        "created_at": time.time(),
-    }
-    _cleanup_store()
+    try:
+        info = inspect_pdf(pdf_bytes)
+    except PdfEngineError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    info = inspect_pdf(pdf_bytes)
+    file_id = str(uuid4())
+    now = time.time()
+    with STORE_LOCK:
+        _cleanup_store_locked(now)
+        PDF_STORE[file_id] = {
+            "bytes": pdf_bytes,
+            "filename": file.filename,
+            "created_at": now,
+        }
+        _cleanup_store_locked(now)
+
     return {"file_id": file_id, "filename": file.filename, **info}
 
 
@@ -127,7 +136,10 @@ async def api_inspect(file: UploadFile = File(...)) -> Dict[str, Any]:
 def api_render(req: RenderRequest) -> Response:
     entry = _get_entry_or_404(req.file_id)
     safe_dpi = max(72, min(req.dpi, 220))
-    png_bytes = render_page_png(entry["bytes"], page_number=req.page, dpi=safe_dpi)
+    try:
+        png_bytes = render_page_png(entry["bytes"], page_number=req.page, dpi=safe_dpi)
+    except PdfEngineError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return Response(content=png_bytes, media_type="image/png")
 
 
@@ -135,23 +147,26 @@ def api_render(req: RenderRequest) -> Response:
 def api_evaluate(req: EvaluateRequest) -> Dict[str, Any]:
     entry = _get_entry_or_404(req.file_id)
     try:
-        updated_fields, updated_pdf = evaluate_fields(entry["bytes"], field_values=req.fields)
+        updated_fields, _ = evaluate_fields(entry["bytes"], field_values=req.fields)
     except PdfEngineError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    entry["bytes"] = updated_pdf
     return {"ok": True, "fields": updated_fields}
 
 
 @app.post("/api/export")
 def api_export(req: ExportRequest) -> Response:
     entry = _get_entry_or_404(req.file_id)
-    out_bytes = build_filled_pdf(
-        pdf_bytes=entry["bytes"],
-        field_values=req.fields,
-        free_texts=[item.model_dump() for item in req.free_texts],
-        strokes=[item.model_dump() for item in req.strokes],
-        flatten=req.flatten,
-    )
+    try:
+        out_bytes = build_filled_pdf(
+            pdf_bytes=entry["bytes"],
+            field_values=req.fields,
+            free_texts=[item.model_dump() for item in req.free_texts],
+            strokes=[item.model_dump() for item in req.strokes],
+            flatten=req.flatten,
+        )
+    except PdfEngineError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
     download_name = _safe_download_name(entry["filename"])
     return Response(
         content=out_bytes,

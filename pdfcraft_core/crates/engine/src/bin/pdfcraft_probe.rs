@@ -182,33 +182,6 @@ fn field_to_json_value(f: &pdfcraft_engine::FormField) -> Value {
     }
 }
 
-fn field_matches_incoming_json(f: &pdfcraft_engine::FormField, val: &Value) -> bool {
-    match f.kind {
-        pdfcraft_engine::FormFieldKind::CheckBox => {
-            let current = checkbox_is_checked(f);
-            match val {
-                Value::Bool(b) => current == *b,
-                Value::String(s) => {
-                    let incoming = !s.is_empty() && s != "Off" && !s.eq_ignore_ascii_case("false");
-                    current == incoming
-                }
-                _ => false,
-            }
-        }
-        _ => {
-            let current = f.value.first().cloned().unwrap_or_default();
-            let incoming = match val {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                Value::Null => String::new(),
-                other => other.to_string(),
-            };
-            current == incoming
-        }
-    }
-}
-
 fn rgba_to_png_bytes(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let expected = (width as usize)
         .checked_mul(height as usize)
@@ -225,7 +198,7 @@ fn rgba_to_png_bytes(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, St
         ));
     }
 
-    let mut png_buf: Vec<u8> = Vec::new();
+    let mut png_buf: Vec<u8> = Vec::with_capacity(expected / 4);
     let encoder = PngEncoder::new(&mut png_buf);
     encoder
         .write_image(rgba, width, height, ColorType::Rgba8.into())
@@ -458,9 +431,6 @@ fn apply_fields_from_json(
         applied_count += 1;
     }
 
-    let _ = field_to_json_value;
-    let _ = field_matches_incoming_json;
-
     Ok(applied_count)
 }
 
@@ -585,7 +555,7 @@ fn main() {
 
     let pdf_path = args[0].as_str();
     match run_inspect(pdf_path) {
-        Ok(payload) => match serde_json::to_string_pretty(&payload) {
+        Ok(payload) => match serde_json::to_string(&payload) {
             Ok(text) => println!("{text}"),
             Err(err) => {
                 eprintln!(r#"{{"ok":false,"error":"Falha ao serializar JSON: {err}"}}"#);
