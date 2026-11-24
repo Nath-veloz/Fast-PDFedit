@@ -1,0 +1,31 @@
+.pdf-widget-input {
+  position: absolute;
+  background: rgba(138, 180, 248, 0.18);
+  color: #0f172a;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  border-radius: 2px;
+  padding: 0 2px;
+  margin: 0;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.pdf-widget-input:hover {
+  background: rgba(138, 180, 248, 0.30);
+  border-color: #2563eb;
+}
+
+.pdf-widget-input:focus {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+  z-index: 25;
+}
+
+.pdf-widget-checkbox {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
