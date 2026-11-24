@@ -199,7 +199,12 @@ function endDraw() {
   }
 }
 
-els.saveBtn.addEventListener("click", () => saveProgress(true));
+els.saveBtn.addEventListener("click", async () => {
+  if (!state.fileId) return;
+  clearTimeout(state.evalTimer);
+  await evaluateWithEngine({ rerenderPage: false, onlyDirty: false });
+  saveProgress(true);
+});
 
 els.backBtn.addEventListener("click", () => {
   clearTimeout(state.evalTimer);
