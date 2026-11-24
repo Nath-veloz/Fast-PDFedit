@@ -1,24 +1,32 @@
 .pdf-widget-input {
   position: absolute;
-  background: rgba(138, 180, 248, 0.18);
+  background: transparent;
   color: #0f172a;
-  border: 1px solid rgba(59, 130, 246, 0.45);
+  font-family: Helvetica, Arial, sans-serif;
+  border: 1px solid transparent;
   border-radius: 2px;
-  padding: 0 2px;
+  padding: 0 3px;
   margin: 0;
   outline: none;
   box-sizing: border-box;
+  transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+/* Modo opcional "Destacar campos" ativado pelo botão na barra */
+.show-field-hints .pdf-widget-input {
+  background: rgba(138, 180, 248, 0.14);
+  border-color: rgba(59, 130, 246, 0.35);
 }
 
 .pdf-widget-input:hover {
-  background: rgba(138, 180, 248, 0.30);
-  border-color: #2563eb;
+  background: rgba(138, 180, 248, 0.12);
+  border-color: rgba(59, 130, 246, 0.45);
 }
 
 .pdf-widget-input:focus {
   background: rgba(255, 255, 255, 0.96);
   border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
   z-index: 25;
 }
 
@@ -28,4 +36,12 @@
   padding: 0;
   cursor: pointer;
   accent-color: #2563eb;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.show-field-hints .pdf-widget-checkbox,
+.pdf-widget-checkbox:hover,
+.pdf-widget-checkbox:focus {
+  opacity: 0.9;
 }

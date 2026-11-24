@@ -300,6 +300,8 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
             "page": page_num,
             "value": f.get("value", ""),
             "rect": rect_val,
+            "read_only": bool(f.get("read_only", False)),
+            "hidden": bool(f.get("hidden", False)),
             "widgets": widgets,
             "calc_script": f.get("calc_script"),
         }

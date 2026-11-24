@@ -87,15 +87,30 @@ async function handleFileSelected(file) {
     els.statusText.textContent = "";
 
     setTool("fields");
-    await loadAndRenderPage();
+    setFieldHints(false);
 
     if (restored) {
       showToast("Rascunho anterior restaurado.");
-      void evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
+      await evaluateWithEngine({ rerenderPage: true, onlyDirty: true }, loadAndRenderPage);
+    } else {
+      await loadAndRenderPage();
     }
   } catch (err) {
     els.statusText.textContent = `Erro: ${err.message}`;
   }
+}
+
+function setFieldHints(enabled) {
+  state.showFieldHints = Boolean(enabled);
+  els.widgetsLayer.classList.toggle("show-field-hints", state.showFieldHints);
+
+  els.toggleHintsBtn.className = state.showFieldHints
+    ? "px-2 py-1 rounded text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40"
+    : "px-2 py-1 rounded text-xs hover:bg-white/10 text-slate-300";
+
+  els.mToggleHints.className = state.showFieldHints
+    ? "px-2 py-1 rounded bg-blue-500/30 text-blue-200"
+    : "px-2 py-1 rounded bg-white/10";
 }
 
 function setTool(newTool) {
@@ -204,6 +219,9 @@ els.backBtn.addEventListener("click", () => {
   els.pdfInput.value = "";
   els.pdfInputEmpty.value = "";
 });
+
+els.toggleHintsBtn.addEventListener("click", () => setFieldHints(!state.showFieldHints));
+els.mToggleHints.addEventListener("click", () => setFieldHints(!state.showFieldHints));
 
 els.pdfInput.addEventListener("change", (e) => handleFileSelected(e.target.files?.[0]));
 els.pdfInputEmpty.addEventListener("change", (e) => handleFileSelected(e.target.files?.[0]));

@@ -35,6 +35,9 @@ export async function evaluateWithEngine(
 
   const payloadFields = buildPayloadByFieldName({ onlyDirty });
   if (onlyDirty && Object.keys(payloadFields).length === 0) {
+    if (rerenderPage && typeof onRerender === "function") {
+      await onRerender();
+    }
     return;
   }
 
@@ -79,9 +82,10 @@ export async function evaluateWithEngine(
     if (changedIds.size > 0) {
       syncDomInputsWithState(changedIds);
       scheduleAutosave();
-      if (shouldRerender && typeof onRerender === "function") {
-        await onRerender();
-      }
+    }
+
+    if (shouldRerender && typeof onRerender === "function") {
+      await onRerender();
     }
   } catch (err) {
     console.warn("Erro ao avaliar campos:", err);
@@ -96,10 +100,10 @@ export async function evaluateWithEngine(
   }
 }
 
-export function scheduleEvaluate(delayMs = 220) {
+export function scheduleEvaluate({ delayMs = 220, rerenderPage = false } = {}, onRerender = null) {
   if (!state.fileId) return;
   clearTimeout(state.evalTimer);
   state.evalTimer = setTimeout(() => {
-    evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
+    evaluateWithEngine({ rerenderPage, onlyDirty: true }, onRerender);
   }, delayMs);
 }

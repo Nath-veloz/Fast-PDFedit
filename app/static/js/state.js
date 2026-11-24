@@ -7,6 +7,7 @@ export const state = {
   docScripts: [],
   zoom: 1.0,
   tool: "fields", // "fields" | "text" | "draw"
+  showFieldHints: false,
   fieldValues: {}, // field.id -> valor atual
   fieldMeta: {}, // field.id -> { id, name, label, type, calc_script, page }
   nameToFieldIds: {}, // field.name -> [field.id]
@@ -52,6 +53,7 @@ export const els = {
   zoomOutBtn: document.getElementById("zoomOutBtn"),
   zoomLabel: document.getElementById("zoomLabel"),
   toolCursorBtn: document.getElementById("toolCursorBtn"),
+  toggleHintsBtn: document.getElementById("toggleHintsBtn"),
   toolTextBtn: document.getElementById("toolTextBtn"),
   toolDrawBtn: document.getElementById("toolDrawBtn"),
   undoBtn: document.getElementById("undoBtn"),
@@ -62,6 +64,7 @@ export const els = {
   mZoomOut: document.getElementById("mZoomOut"),
   mZoomLabel: document.getElementById("mZoomLabel"),
   mToolFields: document.getElementById("mToolFields"),
+  mToggleHints: document.getElementById("mToggleHints"),
   mToolText: document.getElementById("mToolText"),
   mToolDraw: document.getElementById("mToolDraw"),
   mUndo: document.getElementById("mUndo"),

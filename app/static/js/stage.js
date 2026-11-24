@@ -48,14 +48,25 @@ export function applyStageLayout() {
   redrawStrokesCanvas();
 }
 
+function isFieldInteractive(f, width, height) {
+  if (!f) return false;
+  if (f.hidden || f.read_only) return false;
+  if (width < 6 || height < 6) return false;
+  return true;
+}
+
 function renderWidgetsOverlay(w, h, fields) {
   els.widgetsLayer.innerHTML = "";
   for (const f of fields) {
     const [x0, y0, x1, y1] = f.rect || [0, 0, 0, 0];
     const left = Math.round(x0 * w);
     const top = Math.round(y0 * h);
-    const width = Math.max(10, Math.round((x1 - x0) * w));
-    const height = Math.max(10, Math.round((y1 - y0) * h));
+    const width = Math.round((x1 - x0) * w);
+    const height = Math.round((y1 - y0) * h);
+
+    if (!isFieldInteractive(f, width, height)) {
+      continue;
+    }
 
     if (f.type === "CheckBox") {
       const cb = document.createElement("input");
@@ -63,7 +74,7 @@ function renderWidgetsOverlay(w, h, fields) {
       cb.className = "pdf-widget-checkbox";
       cb.dataset.fieldId = f.id;
       cb.checked = Boolean(state.fieldValues[f.id]);
-      const boxSize = Math.min(22, Math.max(12, Math.min(width, height)));
+      const boxSize = Math.min(20, Math.max(12, Math.min(width, height)));
       cb.style.left = `${left + Math.max(0, (width - boxSize) / 2)}px`;
       cb.style.top = `${top + Math.max(0, (height - boxSize) / 2)}px`;
       cb.style.width = `${boxSize}px`;
@@ -71,7 +82,7 @@ function renderWidgetsOverlay(w, h, fields) {
       cb.addEventListener("change", () => {
         state.fieldValues[f.id] = cb.checked;
         scheduleAutosave();
-        scheduleEvaluate(60);
+        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, loadAndRenderPage);
       });
       els.widgetsLayer.appendChild(cb);
     } else {
@@ -83,17 +94,24 @@ function renderWidgetsOverlay(w, h, fields) {
       inp.title = f.label || f.name;
       inp.style.left = `${left}px`;
       inp.style.top = `${top}px`;
-      inp.style.width = `${width}px`;
-      inp.style.height = `${height}px`;
-      inp.style.fontSize = `${Math.max(8, Math.min(18, height * 0.68))}px`;
+      inp.style.width = `${Math.max(10, width)}px`;
+      inp.style.height = `${Math.max(10, height)}px`;
+      inp.style.lineHeight = `${Math.max(10, height - 2)}px`;
+      inp.style.fontSize = `${Math.max(8, Math.min(13.5, height * 0.62))}px`;
       inp.style.textAlign = width <= 45 ? "center" : "left";
+      inp.style.color = "transparent";
+
+      inp.addEventListener("focus", () => {
+        inp.style.color = "#0f172a";
+      });
       inp.addEventListener("input", () => {
         state.fieldValues[f.id] = inp.value;
         scheduleAutosave();
-        scheduleEvaluate(220);
+        scheduleEvaluate({ delayMs: 220, rerenderPage: false });
       });
       inp.addEventListener("blur", () => {
-        scheduleEvaluate(0);
+        inp.style.color = "transparent";
+        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, loadAndRenderPage);
       });
       els.widgetsLayer.appendChild(inp);
     }

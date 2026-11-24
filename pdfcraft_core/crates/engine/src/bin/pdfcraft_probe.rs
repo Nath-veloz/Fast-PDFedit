@@ -282,6 +282,8 @@ fn run_inspect(pdf_path: &str) -> Result<Value, String> {
                     json!({
                         "page": page_1based,
                         "rect": rect,
+                        "read_only": w.read_only,
+                        "hidden": w.hidden,
                     })
                 })
                 .collect();
@@ -293,6 +295,9 @@ fn run_inspect(pdf_path: &str) -> Result<Value, String> {
                 .cloned()
                 .unwrap_or_else(|| json!([0.0, 0.0, 0.0, 0.0]));
 
+            let is_read_only = f.read_only() || (!f.widgets.is_empty() && f.widgets.iter().all(|w| w.read_only));
+            let is_hidden = !f.widgets.is_empty() && f.widgets.iter().all(|w| w.hidden);
+
             let value_json = field_to_json_value(f);
 
             json!({
@@ -301,6 +306,8 @@ fn run_inspect(pdf_path: &str) -> Result<Value, String> {
                 "value": value_json,
                 "page": first_widget_page,
                 "rect": first_widget_rect,
+                "read_only": is_read_only,
+                "hidden": is_hidden,
                 "widgets": widgets,
             })
         })
