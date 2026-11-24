@@ -51,7 +51,7 @@ export function applyStageLayout() {
 function isFieldInteractive(f, width, height) {
   if (!f) return false;
   if (f.hidden || f.read_only) return false;
-  if (width < 6 || height < 6) return false;
+  if (width < 2 || height < 2) return false;
   return true;
 }
 

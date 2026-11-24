@@ -9,8 +9,20 @@ export function showToast(msg) {
   }, 1800);
 }
 
+function getFieldsSignature() {
+  const names = Object.keys(state.fieldMeta || {}).map((fid) => state.fieldMeta[fid]?.name || "");
+  names.sort();
+  const raw = names.join("|");
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
 function getStorageKey() {
-  return `fast_pdfedit_draft_${state.filename}_${state.totalPages}`;
+  return `fast_pdfedit_draft_${state.filename}_${state.totalPages}_${getFieldsSignature()}`;
 }
 
 export function saveProgress(notify = false) {
@@ -30,6 +42,15 @@ export function saveProgress(notify = false) {
   }
 }
 
+export function clearSavedProgress() {
+  if (!state.filename) return;
+  try {
+    localStorage.removeItem(getStorageKey());
+  } catch (_) {
+    // Ignora erros de storage
+  }
+}
+
 export function scheduleAutosave() {
   clearTimeout(state.autosaveTimer);
   state.autosaveTimer = setTimeout(() => saveProgress(false), 600);
@@ -40,8 +61,12 @@ export function loadSavedProgress() {
     const raw = localStorage.getItem(getStorageKey());
     if (!raw) return false;
     const data = JSON.parse(raw);
-    if (data.fieldValues) {
-      state.fieldValues = { ...state.fieldValues, ...data.fieldValues };
+    if (data.fieldValues && typeof data.fieldValues === "object") {
+      for (const [fid, val] of Object.entries(data.fieldValues)) {
+        if (Object.prototype.hasOwnProperty.call(state.fieldValues, fid)) {
+          state.fieldValues[fid] = val;
+        }
+      }
     }
     if (Array.isArray(data.freeTexts)) state.freeTexts = data.freeTexts;
     if (Array.isArray(data.strokes)) state.strokes = data.strokes;

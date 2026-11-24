@@ -33,26 +33,29 @@ export async function evaluateWithEngine(
 ) {
   if (!state.fileId) return;
 
-  const payloadFields = buildPayloadByFieldName({ onlyDirty });
-  if (onlyDirty && Object.keys(payloadFields).length === 0) {
-    if (rerenderPage && typeof onRerender === "function") {
-      await onRerender();
-    }
-    return;
-  }
-
   if (state.evalInFlight) {
     state.evalPending = true;
     state.evalRerenderPending = state.evalRerenderPending || rerenderPage;
+    state.evalForceFullPending = state.evalForceFullPending || !onlyDirty;
     return;
   }
 
   state.evalInFlight = true;
   state.evalPending = false;
   const shouldRerender = rerenderPage || state.evalRerenderPending;
+  const effectiveOnlyDirty = onlyDirty && !state.evalForceFullPending;
   state.evalRerenderPending = false;
+  state.evalForceFullPending = false;
 
   try {
+    const payloadFields = buildPayloadByFieldName({ onlyDirty: effectiveOnlyDirty });
+    if (effectiveOnlyDirty && Object.keys(payloadFields).length === 0) {
+      if (shouldRerender && typeof onRerender === "function") {
+        await onRerender();
+      }
+      return;
+    }
+
     const data = await evaluatePdfFields(state.fileId, payloadFields);
     const engineFields = data?.fields;
     if (!engineFields || typeof engineFields !== "object") return;
@@ -93,9 +96,11 @@ export async function evaluateWithEngine(
     state.evalInFlight = false;
     if (state.evalPending) {
       const nextRerender = state.evalRerenderPending;
+      const nextOnlyDirty = !state.evalForceFullPending;
       state.evalPending = false;
       state.evalRerenderPending = false;
-      await evaluateWithEngine({ rerenderPage: nextRerender, onlyDirty: true }, onRerender);
+      state.evalForceFullPending = false;
+      await evaluateWithEngine({ rerenderPage: nextRerender, onlyDirty: nextOnlyDirty }, onRerender);
     }
   }
 }

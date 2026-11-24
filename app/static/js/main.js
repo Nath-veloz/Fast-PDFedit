@@ -91,7 +91,7 @@ async function handleFileSelected(file) {
 
     if (restored) {
       showToast("Rascunho anterior restaurado.");
-      await evaluateWithEngine({ rerenderPage: true, onlyDirty: true }, loadAndRenderPage);
+      await evaluateWithEngine({ rerenderPage: true, onlyDirty: false }, loadAndRenderPage);
     } else {
       await loadAndRenderPage();
     }
@@ -287,7 +287,7 @@ window.addEventListener("beforeunload", () => {
 els.exportBtn.addEventListener("click", async () => {
   if (!state.fileId) return;
   clearTimeout(state.evalTimer);
-  await evaluateWithEngine({ rerenderPage: false, onlyDirty: true });
+  await evaluateWithEngine({ rerenderPage: false, onlyDirty: false });
   saveProgress(false);
   els.exportBtn.disabled = true;
   const prev = els.exportBtn.textContent;

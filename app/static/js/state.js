@@ -18,10 +18,10 @@ export const state = {
   isDrawing: false,
   currentStroke: null,
   autosaveTimer: null,
-  evalTimer: null,
   evalInFlight: false,
   evalPending: false,
   evalRerenderPending: false,
+  evalForceFullPending: false,
   lastPageUrl: null,
 };
 
