@@ -3,49 +3,78 @@ import { renderPdfPage } from "./api.js";
 import { scheduleAutosave } from "./draft.js";
 import { scheduleEvaluate } from "./engine-sync.js";
 
-export function updatePageLabels() {
-  els.pageInput.value = String(state.currentPage);
-  els.mPageLabel.textContent = `${state.currentPage} / ${state.totalPages}`;
+function getStageElements(pageNum) {
+  const container = els.pagesContainer || document.getElementById("pagesContainer");
+  const stage = container?.querySelector(`[data-page-num="${pageNum}"]`);
+  if (!stage) return null;
+
+  const divs = stage.querySelectorAll("div");
+  return {
+    stage,
+    pageImage: stage.querySelector("img"),
+    widgetsLayer: divs[0] || null,
+    drawCanvas: stage.querySelector("canvas"),
+    freeTextsLayer: divs[1] || null,
+  };
 }
 
-export async function loadAndRenderPage() {
+export function revokeAllPageUrls() {
+  for (const url of Object.values(state.pageUrls || {})) {
+    if (url) URL.revokeObjectURL(url);
+  }
+  state.pageUrls = {};
+}
+
+export async function loadAndRenderPage(pageNum = state.currentPage) {
   if (!state.fileId) return;
-  updatePageLabels();
+  const target = getStageElements(pageNum);
+  if (!target?.pageImage) return;
 
   const dpi = state.zoom > 1.25 ? 200 : 150;
-  const blob = await renderPdfPage(state.fileId, state.currentPage, dpi);
+  const blob = await renderPdfPage(state.fileId, pageNum, dpi);
   if (!blob) return;
 
   const nextUrl = URL.createObjectURL(blob);
-  els.pageImage.onload = () => {
-    applyStageLayout();
-    if (state.lastPageUrl) {
-      URL.revokeObjectURL(state.lastPageUrl);
+  target.pageImage.onload = () => {
+    applyStageLayout(pageNum);
+    const prevUrl = state.pageUrls[pageNum];
+    if (prevUrl && prevUrl !== nextUrl) {
+      URL.revokeObjectURL(prevUrl);
     }
-    state.lastPageUrl = nextUrl;
+    state.pageUrls[pageNum] = nextUrl;
   };
-  els.pageImage.src = nextUrl;
+  target.pageImage.src = nextUrl;
 }
 
-export function applyStageLayout() {
-  const pageObj = state.pages.find((p) => p.page === state.currentPage);
+export async function loadAndRenderAllPages() {
+  if (!state.fileId) return;
+  for (let p = 1; p <= state.totalPages; p++) {
+    await loadAndRenderPage(p);
+  }
+}
+
+export function applyStageLayout(pageNum = state.currentPage) {
+  const target = getStageElements(pageNum);
+  if (!target?.stage || !target.pageImage || !target.drawCanvas) return;
+
+  const pageObj = state.pages.find((p) => p.page === pageNum);
   const baseWidth = pageObj?.width || 595;
   const baseHeight = pageObj?.height || 842;
 
   const renderedW = Math.round(baseWidth * state.zoom);
   const renderedH = Math.round(baseHeight * state.zoom);
 
-  els.pageStage.style.width = `${renderedW}px`;
-  els.pageStage.style.height = `${renderedH}px`;
-  els.pageImage.style.width = `${renderedW}px`;
-  els.pageImage.style.height = `${renderedH}px`;
+  target.stage.style.width = `${renderedW}px`;
+  target.stage.style.height = `${renderedH}px`;
+  target.pageImage.style.width = `${renderedW}px`;
+  target.pageImage.style.height = `${renderedH}px`;
 
-  els.drawCanvas.width = renderedW;
-  els.drawCanvas.height = renderedH;
+  target.drawCanvas.width = renderedW;
+  target.drawCanvas.height = renderedH;
 
-  renderWidgetsOverlay(renderedW, renderedH, pageObj?.fields || []);
-  renderFreeTextsOverlay();
-  redrawStrokesCanvas();
+  renderWidgetsOverlay(pageNum, renderedW, renderedH, pageObj?.fields || []);
+  renderFreeTextsOverlay(pageNum);
+  redrawStrokesCanvas(pageNum);
 }
 
 function isFieldInteractive(f, width, height) {
@@ -55,8 +84,13 @@ function isFieldInteractive(f, width, height) {
   return true;
 }
 
-function renderWidgetsOverlay(w, h, fields) {
-  els.widgetsLayer.innerHTML = "";
+function renderWidgetsOverlay(pageNum, w, h, fields) {
+  const target = getStageElements(pageNum);
+  if (!target?.widgetsLayer) return;
+
+  target.widgetsLayer.classList.toggle("show-field-hints", Boolean(state.showFieldHints));
+  target.widgetsLayer.innerHTML = "";
+
   for (const f of fields) {
     const [x0, y0, x1, y1] = f.rect || [0, 0, 0, 0];
     const left = Math.round(x0 * w);
@@ -82,9 +116,9 @@ function renderWidgetsOverlay(w, h, fields) {
       cb.addEventListener("change", () => {
         state.fieldValues[f.id] = cb.checked;
         scheduleAutosave();
-        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, loadAndRenderPage);
+        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, loadAndRenderAllPages);
       });
-      els.widgetsLayer.appendChild(cb);
+      target.widgetsLayer.appendChild(cb);
     } else {
       const inp = document.createElement("input");
       inp.type = "text";
@@ -111,16 +145,19 @@ function renderWidgetsOverlay(w, h, fields) {
       });
       inp.addEventListener("blur", () => {
         inp.style.color = "transparent";
-        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, loadAndRenderPage);
+        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, loadAndRenderAllPages);
       });
-      els.widgetsLayer.appendChild(inp);
+      target.widgetsLayer.appendChild(inp);
     }
   }
 }
 
-export function renderFreeTextsOverlay() {
-  els.freeTextsLayer.innerHTML = "";
-  const items = state.freeTexts.filter((t) => t.page === state.currentPage);
+export function renderFreeTextsOverlay(pageNum = state.currentPage) {
+  const target = getStageElements(pageNum);
+  if (!target?.freeTextsLayer) return;
+
+  target.freeTextsLayer.innerHTML = "";
+  const items = state.freeTexts.filter((t) => t.page === pageNum);
   for (const t of items) {
     const el = document.createElement("div");
     el.style.position = "absolute";
@@ -129,17 +166,20 @@ export function renderFreeTextsOverlay() {
     el.style.fontSize = `${Math.max(9, t.font_size * state.zoom)}px`;
     el.className = "text-blue-900 font-medium whitespace-nowrap leading-none";
     el.textContent = t.text;
-    els.freeTextsLayer.appendChild(el);
+    target.freeTextsLayer.appendChild(el);
   }
 }
 
-export function redrawStrokesCanvas() {
-  const ctx = els.drawCanvas.getContext("2d");
-  const w = els.drawCanvas.width;
-  const h = els.drawCanvas.height;
+export function redrawStrokesCanvas(pageNum = state.currentPage) {
+  const target = getStageElements(pageNum);
+  if (!target?.drawCanvas) return;
+
+  const ctx = target.drawCanvas.getContext("2d");
+  const w = target.drawCanvas.width;
+  const h = target.drawCanvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  const pageStrokes = state.strokes.filter((s) => s.page === state.currentPage);
+  const pageStrokes = state.strokes.filter((s) => s.page === pageNum);
   ctx.strokeStyle = "#1d4ed8";
   ctx.lineWidth = Math.max(1.5, 2 * state.zoom);
   ctx.lineCap = "round";

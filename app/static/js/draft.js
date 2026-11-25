@@ -1,4 +1,4 @@
-import { state, els } from "./state.js";
+import { state, els, normalizeFieldValueForCompare } from "./state.js";
 
 export function showToast(msg) {
   els.toastBanner.textContent = msg;
@@ -63,8 +63,9 @@ export function loadSavedProgress() {
     const data = JSON.parse(raw);
     if (data.fieldValues && typeof data.fieldValues === "object") {
       for (const [fid, val] of Object.entries(data.fieldValues)) {
-        if (Object.prototype.hasOwnProperty.call(state.fieldValues, fid)) {
-          state.fieldValues[fid] = val;
+        if (Object.prototype.hasOwnProperty.call(state.fieldMeta, fid)) {
+          const meta = state.fieldMeta[fid];
+          state.fieldValues[fid] = normalizeFieldValueForCompare(meta?.type, val);
         }
       }
     }

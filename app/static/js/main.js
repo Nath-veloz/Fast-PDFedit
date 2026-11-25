@@ -10,6 +10,10 @@ import {
   redrawStrokesCanvas,
 } from "./stage.js";
 
+function getPagesContainer() {
+  return document.getElementById("pagesContainer") || els.pageStage;
+}
+
 function setHeaderMode(mode) {
   const homeHeader = document.getElementById("homeHeader");
   const editorHeader = document.getElementById("editorHeader");
@@ -31,8 +35,154 @@ function pushHistory(action) {
 
 function updateUndoState() {
   const disabled = state.history.length === 0;
-  els.undoBtn.disabled = disabled;
-  els.mUndo.disabled = disabled;
+  if (els.undoBtn) els.undoBtn.disabled = disabled;
+  if (els.mUndo) els.mUndo.disabled = disabled;
+}
+
+function buildPageStages() {
+  const container = getPagesContainer();
+  if (!container) return;
+
+  container.innerHTML = "";
+  for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+    const stage = document.createElement("div");
+    stage.dataset.pageNum = String(pageNum);
+    stage.className = "relative bg-white shadow-2xl mx-auto shrink-0";
+
+    const img = document.createElement("img");
+    img.alt = `Página ${pageNum}`;
+    img.className = "block select-none pointer-events-none";
+
+    const widgetsLayer = document.createElement("div");
+    widgetsLayer.className = "absolute inset-0";
+
+    const drawCanvas = document.createElement("canvas");
+    drawCanvas.className = "absolute inset-0";
+
+    const freeTextsLayer = document.createElement("div");
+    freeTextsLayer.className = "absolute inset-0 pointer-events-none";
+
+    stage.append(img, widgetsLayer, drawCanvas, freeTextsLayer);
+
+    stage.addEventListener("click", (e) => {
+      if (!state.fileId || state.tool !== "text") return;
+      const rect = stage.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const xNorm = (e.clientX - rect.left) / rect.width;
+      const yNorm = (e.clientY - rect.top) / rect.height;
+
+      const text = prompt("Digite o texto:");
+      if (!text || !text.trim()) return;
+
+      const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      state.freeTexts.push({
+        id,
+        page: pageNum,
+        x: Math.max(0, Math.min(1, xNorm)),
+        y: Math.max(0, Math.min(1, yNorm)),
+        text: text.trim(),
+        font_size: 11,
+      });
+      pushHistory({ type: "text", id });
+      renderAllPagesOverlays();
+      scheduleAutosave();
+    });
+
+    drawCanvas.addEventListener("mousedown", (e) => startDraw(e, pageNum, drawCanvas));
+    drawCanvas.addEventListener("touchstart", (e) => startDraw(e, pageNum, drawCanvas), {
+      passive: false,
+    });
+
+    container.appendChild(stage);
+  }
+}
+
+function getStageEls(pageNum) {
+  const container = getPagesContainer();
+  const stage = container?.querySelector(`[data-page-num="${pageNum}"]`);
+  if (!stage) return null;
+
+  return {
+    stage,
+    pageImage: stage.querySelector("img"),
+    widgetsLayer: stage.querySelector("div"),
+    drawCanvas: stage.querySelector("canvas"),
+    freeTextsLayer: stage.querySelectorAll("div")[1],
+  };
+}
+
+function withPageContext(pageNum, fn) {
+  const pageEls = getStageEls(pageNum);
+  if (!pageEls) return;
+
+  const prevPage = state.currentPage;
+  const savedRefs = {
+    pageStage: els.pageStage,
+    pageImage: els.pageImage,
+    widgetsLayer: els.widgetsLayer,
+    drawCanvas: els.drawCanvas,
+    freeTextsLayer: els.freeTextsLayer,
+  };
+
+  state.currentPage = pageNum;
+  els.pageStage = pageEls.stage;
+  els.pageImage = pageEls.pageImage;
+  els.widgetsLayer = pageEls.widgetsLayer;
+  els.drawCanvas = pageEls.drawCanvas;
+  els.freeTextsLayer = pageEls.freeTextsLayer;
+
+  try {
+    return fn(pageEls);
+  } finally {
+    els.pageStage = savedRefs.pageStage;
+    els.pageImage = savedRefs.pageImage;
+    els.widgetsLayer = savedRefs.widgetsLayer;
+    els.drawCanvas = savedRefs.drawCanvas;
+    els.freeTextsLayer = savedRefs.freeTextsLayer;
+    state.currentPage = prevPage;
+  }
+}
+
+async function renderAllPages(_options = {}) {
+  if (!state.fileId) return;
+  for (let p = 1; p <= state.totalPages; p++) {
+    await withPageContext(p, () => loadAndRenderPage(p));
+  }
+  applyAllPagesLayout();
+}
+
+function applyAllPagesLayout() {
+  for (let p = 1; p <= state.totalPages; p++) {
+    withPageContext(p, () => applyStageLayout(p));
+  }
+  syncToolPointersOnStages();
+}
+
+function renderAllPagesOverlays() {
+  for (let p = 1; p <= state.totalPages; p++) {
+    withPageContext(p, () => {
+      renderFreeTextsOverlay(p);
+      redrawStrokesCanvas(p);
+    });
+  }
+}
+
+function syncToolPointersOnStages() {
+  const container = getPagesContainer();
+  if (!container) return;
+
+  const isFields = state.tool === "fields";
+  const isText = state.tool === "text";
+  const isDraw = state.tool === "draw";
+
+  container.querySelectorAll("[data-page-num]").forEach((stage) => {
+    const widgetsLayer = stage.querySelector("div");
+    const drawCanvas = stage.querySelector("canvas");
+    if (widgetsLayer) widgetsLayer.style.pointerEvents = isFields ? "auto" : "none";
+    if (drawCanvas) drawCanvas.style.pointerEvents = isDraw ? "auto" : "none";
+    stage.style.cursor = isText ? "text" : isDraw ? "crosshair" : "default";
+  });
 }
 
 function undoLastAction() {
@@ -42,11 +192,11 @@ function undoLastAction() {
 
   if (last.type === "text") {
     state.freeTexts = state.freeTexts.filter((t) => t.id !== last.id);
-    renderFreeTextsOverlay();
+    renderAllPagesOverlays();
     scheduleAutosave();
   } else if (last.type === "stroke") {
     state.strokes = state.strokes.filter((s) => s.id !== last.id);
-    redrawStrokesCanvas();
+    renderAllPagesOverlays();
     scheduleAutosave();
   }
 }
@@ -77,29 +227,25 @@ async function handleFileSelected(file) {
     state.history = [];
     updateUndoState();
 
-    for (const p of state.pages) {
-      for (const f of p.fields || []) {
-        state.fieldValues[f.id] = f.value;
-      }
-    }
-
     indexFieldsMetadata();
     const restored = loadSavedProgress();
 
     setHeaderMode("editor");
     els.fileNameLabel.textContent = state.filename;
-    els.totalPagesLabel.textContent = String(state.totalPages);
-    els.pageInput.max = String(state.totalPages);
     els.backBtn.classList.remove("hidden");
     els.toolbarCenter.classList.remove("hidden");
-    els.toolbarCenter.classList.add("md:flex");
     els.mobileSubbar.classList.remove("hidden");
     els.actionsRight.classList.remove("hidden");
     els.actionsRight.classList.add("flex");
     els.flattenWrap.classList.remove("hidden");
     els.emptyState.classList.add("hidden");
     renderHomeWarpGrid();
-    els.pageStage.classList.remove("hidden");
+
+    const container = getPagesContainer();
+    container.classList.remove("hidden");
+    container.classList.add("flex");
+    buildPageStages();
+
     els.exportBtn.disabled = false;
     els.statusText.textContent = "";
 
@@ -108,9 +254,9 @@ async function handleFileSelected(file) {
 
     if (restored) {
       showToast("Rascunho anterior restaurado.");
-      await evaluateWithEngine({ rerenderPage: true, onlyDirty: false }, loadAndRenderPage);
+      await evaluateWithEngine({ rerenderPage: true, onlyDirty: false }, renderAllPages);
     } else {
-      await loadAndRenderPage();
+      await renderAllPages();
     }
   } catch (err) {
     els.statusText.textContent = `Erro: ${err.message}`;
@@ -119,7 +265,10 @@ async function handleFileSelected(file) {
 
 function setFieldHints(enabled) {
   state.showFieldHints = Boolean(enabled);
-  els.widgetsLayer.classList.toggle("show-field-hints", state.showFieldHints);
+  const container = getPagesContainer();
+  container?.querySelectorAll("[data-page-num] > div:first-of-type").forEach((layer) => {
+    layer.classList.toggle("show-field-hints", state.showFieldHints);
+  });
 
   els.toggleHintsBtn.className = state.showFieldHints
     ? "px-2 py-1 rounded text-xs bg-violet-500/30 text-violet-100 border border-violet-400/50"
@@ -159,9 +308,7 @@ function setTool(newTool) {
     ? "px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40"
     : "px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25";
 
-  els.widgetsLayer.style.pointerEvents = isFields ? "auto" : "none";
-  els.drawCanvas.style.pointerEvents = isDraw ? "auto" : "none";
-  els.pageStage.style.cursor = isText ? "text" : isDraw ? "crosshair" : "default";
+  syncToolPointersOnStages();
 }
 
 function setZoom(val) {
@@ -169,43 +316,38 @@ function setZoom(val) {
   const pct = `${Math.round(state.zoom * 100)}%`;
   els.zoomLabel.textContent = pct;
   els.mZoomLabel.textContent = pct;
-  applyStageLayout();
+  applyAllPagesLayout();
 }
 
-async function goToPage(p) {
-  if (!state.fileId) return;
-  const clamped = Math.max(1, Math.min(state.totalPages, p));
-  state.currentPage = clamped;
-  scheduleAutosave();
-  await loadAndRenderPage();
-}
-
-function getNormCoords(e) {
-  const rect = els.drawCanvas.getBoundingClientRect();
+function getNormCoords(e, canvas) {
+  const rect = canvas.getBoundingClientRect();
   const clientX = e.touches?.[0]?.clientX ?? e.clientX;
   const clientY = e.touches?.[0]?.clientY ?? e.clientY;
   return {
-    x: Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)),
-    y: Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)),
+    x: Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(rect.width, 1))),
+    y: Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(rect.height, 1))),
   };
 }
 
-function startDraw(e) {
+function startDraw(e, pageNum, canvas) {
   if (!state.fileId || state.tool !== "draw") return;
   e.preventDefault();
-  const pt = getNormCoords(e);
+  const pt = getNormCoords(e, canvas);
   const id = `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  state.currentPage = pageNum;
   state.isDrawing = true;
-  state.currentStroke = { id, page: state.currentPage, points: [pt] };
+  state.currentStroke = { id, page: pageNum, points: [pt] };
   state.strokes.push(state.currentStroke);
   pushHistory({ type: "stroke", id });
 }
 
 function moveDraw(e) {
   if (!state.isDrawing || !state.currentStroke) return;
+  const pageEls = getStageEls(state.currentStroke.page);
+  if (!pageEls?.drawCanvas) return;
   e.preventDefault();
-  state.currentStroke.points.push(getNormCoords(e));
-  redrawStrokesCanvas();
+  state.currentStroke.points.push(getNormCoords(e, pageEls.drawCanvas));
+  withPageContext(state.currentStroke.page, () => redrawStrokesCanvas(state.currentStroke.page));
 }
 
 function endDraw() {
@@ -231,11 +373,15 @@ els.backBtn.addEventListener("click", () => {
   setHeaderMode("home");
   els.backBtn.classList.add("hidden");
   els.toolbarCenter.classList.add("hidden");
-  els.toolbarCenter.classList.remove("md:flex");
   els.mobileSubbar.classList.add("hidden");
   els.actionsRight.classList.add("hidden");
   els.actionsRight.classList.remove("flex");
-  els.pageStage.classList.add("hidden");
+
+  const container = getPagesContainer();
+  container.classList.add("hidden");
+  container.classList.remove("flex");
+  container.innerHTML = "";
+
   els.emptyState.classList.remove("hidden");
   renderHomeWarpGrid();
   els.fileNameLabel.textContent = "Fast PDFedit";
@@ -265,42 +411,9 @@ els.zoomOutBtn.addEventListener("click", () => setZoom(state.zoom - 0.15));
 els.mZoomIn.addEventListener("click", () => setZoom(state.zoom + 0.15));
 els.mZoomOut.addEventListener("click", () => setZoom(state.zoom - 0.15));
 
-els.prevPageBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
-els.nextPageBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
-els.mPrevBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
-els.mNextBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
-els.pageInput.addEventListener("change", () =>
-  goToPage(parseInt(els.pageInput.value || "1", 10))
-);
-
-els.pageStage.addEventListener("click", (e) => {
-  if (!state.fileId || state.tool !== "text") return;
-  const rect = els.pageStage.getBoundingClientRect();
-  const xNorm = (e.clientX - rect.left) / rect.width;
-  const yNorm = (e.clientY - rect.top) / rect.height;
-
-  const text = prompt("Digite o texto:");
-  if (!text || !text.trim()) return;
-
-  const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  state.freeTexts.push({
-    id,
-    page: state.currentPage,
-    x: Math.max(0, Math.min(1, xNorm)),
-    y: Math.max(0, Math.min(1, yNorm)),
-    text: text.trim(),
-    font_size: 11,
-  });
-  pushHistory({ type: "text", id });
-  renderFreeTextsOverlay();
-  scheduleAutosave();
-});
-
-els.drawCanvas.addEventListener("mousedown", startDraw);
-els.drawCanvas.addEventListener("mousemove", moveDraw);
+window.addEventListener("mousemove", moveDraw);
 window.addEventListener("mouseup", endDraw);
-els.drawCanvas.addEventListener("touchstart", startDraw, { passive: false });
-els.drawCanvas.addEventListener("touchmove", moveDraw, { passive: false });
+window.addEventListener("touchmove", moveDraw, { passive: false });
 window.addEventListener("touchend", endDraw);
 window.addEventListener("beforeunload", () => {
   if (state.fileId) {
@@ -342,4 +455,5 @@ els.exportBtn.addEventListener("click", async () => {
     els.exportBtn.textContent = prev;
   }
 });
+
 initHomeWarpGrid();

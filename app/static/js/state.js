@@ -22,7 +22,7 @@ export const state = {
   evalPending: false,
   evalRerenderPending: false,
   evalForceFullPending: false,
-  lastPageUrl: null,
+  pageUrls: {}, // pageNum -> objectUrl
 };
 
 export const els = {
@@ -40,15 +40,7 @@ export const els = {
   exportBtn: document.getElementById("exportBtn"),
   toastBanner: document.getElementById("toastBanner"),
   emptyState: document.getElementById("emptyState"),
-  pageStage: document.getElementById("pageStage"),
-  pageImage: document.getElementById("pageImage"),
-  widgetsLayer: document.getElementById("widgetsLayer"),
-  drawCanvas: document.getElementById("drawCanvas"),
-  freeTextsLayer: document.getElementById("freeTextsLayer"),
-  pageInput: document.getElementById("pageInput"),
-  totalPagesLabel: document.getElementById("totalPagesLabel"),
-  prevPageBtn: document.getElementById("prevPageBtn"),
-  nextPageBtn: document.getElementById("nextPageBtn"),
+  pagesContainer: document.getElementById("pagesContainer"),
   zoomInBtn: document.getElementById("zoomInBtn"),
   zoomOutBtn: document.getElementById("zoomOutBtn"),
   zoomLabel: document.getElementById("zoomLabel"),
@@ -57,9 +49,6 @@ export const els = {
   toolTextBtn: document.getElementById("toolTextBtn"),
   toolDrawBtn: document.getElementById("toolDrawBtn"),
   undoBtn: document.getElementById("undoBtn"),
-  mPrevBtn: document.getElementById("mPrevBtn"),
-  mNextBtn: document.getElementById("mNextBtn"),
-  mPageLabel: document.getElementById("mPageLabel"),
   mZoomIn: document.getElementById("mZoomIn"),
   mZoomOut: document.getElementById("mZoomOut"),
   mZoomLabel: document.getElementById("mZoomLabel"),
@@ -79,10 +68,14 @@ export function indexFieldsMetadata() {
   state.fieldMeta = {};
   state.nameToFieldIds = {};
   state.lastEngineByName = {};
+  state.fieldValues = {};
 
   for (const p of state.pages || []) {
     for (const f of p.fields || []) {
+      const initialVal = normalizeFieldValueForCompare(f.type, f.value);
       state.fieldMeta[f.id] = { ...f, page: p.page };
+      state.fieldValues[f.id] = initialVal;
+
       const fname = String(f.name || "");
       if (fname) {
         if (!state.nameToFieldIds[fname]) state.nameToFieldIds[fname] = [];
@@ -90,7 +83,7 @@ export function indexFieldsMetadata() {
           state.nameToFieldIds[fname].push(f.id);
         }
         if (!(fname in state.lastEngineByName)) {
-          state.lastEngineByName[fname] = normalizeFieldValueForCompare(f.type, f.value);
+          state.lastEngineByName[fname] = initialVal;
         }
       }
     }

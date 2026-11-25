@@ -1,6 +1,5 @@
 import {
   state,
-  els,
   normalizeFieldValueForCompare,
   buildPayloadByFieldName,
 } from "./state.js";
@@ -10,7 +9,9 @@ import { scheduleAutosave } from "./draft.js";
 function syncDomInputsWithState(changedIds) {
   if (!changedIds || !changedIds.size) return;
   const activeEl = document.activeElement;
-  const inputs = els.widgetsLayer.querySelectorAll("[data-field-id]");
+  const root = document.getElementById("pagesContainer") || document;
+  const inputs = root.querySelectorAll("[data-field-id]");
+
   for (const el of inputs) {
     const fid = el.getAttribute("data-field-id");
     if (!fid || !changedIds.has(fid)) continue;
