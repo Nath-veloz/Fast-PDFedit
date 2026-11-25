@@ -18,39 +18,66 @@ function getStageElements(pageNum) {
   };
 }
 
+export function getTargetRenderDpi() {
+  return state.zoom > 1.25 ? 190 : 115;
+}
+
 export function revokeAllPageUrls() {
   for (const url of Object.values(state.pageUrls || {})) {
     if (url) URL.revokeObjectURL(url);
   }
   state.pageUrls = {};
+  state.pageRenderMeta = {};
 }
 
-export async function loadAndRenderPage(pageNum = state.currentPage) {
+export async function loadAndRenderPage(pageNum = state.currentPage, { force = false } = {}) {
   if (!state.fileId) return;
   const target = getStageElements(pageNum);
   if (!target?.pageImage) return;
 
-  const dpi = state.zoom > 1.25 ? 200 : 150;
+  const dpi = getTargetRenderDpi();
+  state.pageRenderMeta = state.pageRenderMeta || {};
+  const prevMeta = state.pageRenderMeta[pageNum];
+
+  if (!force && prevMeta && prevMeta.fileId === state.fileId && prevMeta.dpi === dpi && state.pageUrls[pageNum]) {
+    if (target.pageImage.src !== state.pageUrls[pageNum]) {
+      target.pageImage.src = state.pageUrls[pageNum];
+    }
+    applyStageLayout(pageNum);
+    return;
+  }
+
   const blob = await renderPdfPage(state.fileId, pageNum, dpi);
-  if (!blob) return;
+  if (!blob || !state.fileId) return;
 
   const nextUrl = URL.createObjectURL(blob);
+  const prevUrl = state.pageUrls[pageNum];
+  state.pageUrls[pageNum] = nextUrl;
+  state.pageRenderMeta[pageNum] = { fileId: state.fileId, dpi };
+
   target.pageImage.onload = () => {
     applyStageLayout(pageNum);
-    const prevUrl = state.pageUrls[pageNum];
     if (prevUrl && prevUrl !== nextUrl) {
       URL.revokeObjectURL(prevUrl);
     }
-    state.pageUrls[pageNum] = nextUrl;
   };
   target.pageImage.src = nextUrl;
 }
 
-export async function loadAndRenderAllPages() {
+export async function loadAndRenderAllPages(options = {}) {
   if (!state.fileId) return;
-  for (let p = 1; p <= state.totalPages; p++) {
-    await loadAndRenderPage(p);
+  const concurrency = 3;
+  let nextPage = 1;
+  const workerCount = Math.min(concurrency, state.totalPages);
+
+  async function worker() {
+    while (nextPage <= state.totalPages) {
+      const p = nextPage++;
+      await loadAndRenderPage(p, options);
+    }
   }
+
+  await Promise.all(Array.from({ length: workerCount }, worker));
 }
 
 export function applyStageLayout(pageNum = state.currentPage) {
@@ -116,7 +143,7 @@ function renderWidgetsOverlay(pageNum, w, h, fields) {
       cb.addEventListener("change", () => {
         state.fieldValues[f.id] = cb.checked;
         scheduleAutosave();
-        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, loadAndRenderAllPages);
+        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, () => loadAndRenderAllPages({ force: true }));
       });
       target.widgetsLayer.appendChild(cb);
     } else {
@@ -145,7 +172,7 @@ function renderWidgetsOverlay(pageNum, w, h, fields) {
       });
       inp.addEventListener("blur", () => {
         inp.style.color = "transparent";
-        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, loadAndRenderAllPages);
+        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, () => loadAndRenderAllPages({ force: true }));
       });
       target.widgetsLayer.appendChild(inp);
     }

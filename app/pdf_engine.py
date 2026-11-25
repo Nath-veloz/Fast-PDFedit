@@ -1,12 +1,26 @@
+import atexit
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
-PROBE_EXE = Path(os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\cargo_target\pdfcraft_core\debug\pdfcraft_probe.exe"))
+PROBE_EXE = Path(
+    os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\cargo_target\pdfcraft_core\debug\pdfcraft_probe.exe")
+)
 PROBE_TIMEOUT_SECONDS = 30
+TEMP_PDF_TTL_SECONDS = 3600
+MAX_TEMP_PDFS = 64
+
+_TMP_DIR = Path(tempfile.mkdtemp(prefix="fast_pdfedit_"))
+_TMP_LOCK = threading.Lock()
+# sha256_hex -> {"path": Path, "last_used": float}
+_TEMP_PDF_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 class PdfEngineError(RuntimeError):
@@ -26,16 +40,58 @@ def _safe_unlink(path: Optional[Path]) -> None:
             pass
 
 
+def _cleanup_temp_pdfs_locked(now: float) -> None:
+    expired = [
+        h for h, info in _TEMP_PDF_CACHE.items() if now - info["last_used"] > TEMP_PDF_TTL_SECONDS
+    ]
+    for h in expired:
+        info = _TEMP_PDF_CACHE.pop(h, None)
+        if info:
+            _safe_unlink(info.get("path"))
+
+    while len(_TEMP_PDF_CACHE) > MAX_TEMP_PDFS:
+        oldest_hash = next(iter(_TEMP_PDF_CACHE))
+        info = _TEMP_PDF_CACHE.pop(oldest_hash, None)
+        if info:
+            _safe_unlink(info.get("path"))
+
+
+def _get_or_create_temp_pdf(pdf_bytes: bytes) -> Path:
+    digest = hashlib.sha256(pdf_bytes).hexdigest()
+    now = time.time()
+
+    with _TMP_LOCK:
+        _cleanup_temp_pdfs_locked(now)
+        cached = _TEMP_PDF_CACHE.get(digest)
+        if cached and cached["path"].exists():
+            cached["last_used"] = now
+            return cached["path"]
+
+        _TMP_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_path = _TMP_DIR / f"{digest[:24]}.pdf"
+        if not tmp_path.exists():
+            tmp_path.write_bytes(pdf_bytes)
+
+        _TEMP_PDF_CACHE[digest] = {"path": tmp_path, "last_used": now}
+        _cleanup_temp_pdfs_locked(now)
+        return tmp_path
+
+
+def _cleanup_all_temp_files() -> None:
+    with _TMP_LOCK:
+        _TEMP_PDF_CACHE.clear()
+    shutil.rmtree(_TMP_DIR, ignore_errors=True)
+
+
+atexit.register(_cleanup_all_temp_files)
+
+
 def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[str, Any]:
     _ensure_probe_exists()
+    pdf_path = _get_or_create_temp_pdf(pdf_bytes)
 
-    tmp_path: Optional[Path] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(pdf_bytes)
-            tmp_path = Path(tmp.name)
-
-        cmd = [str(PROBE_EXE), *(args or []), str(tmp_path)]
+        cmd = [str(PROBE_EXE), *(args or []), str(pdf_path)]
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -46,8 +102,6 @@ def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[
         )
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao executar o motor PDF.") from exc
-    finally:
-        _safe_unlink(tmp_path)
 
     raw_out = (proc.stdout or "").strip()
     raw_err = (proc.stderr or "").strip()
@@ -72,15 +126,11 @@ def _run_probe_json(pdf_bytes: bytes, args: Optional[List[str]] = None) -> Dict[
 
 def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
     _ensure_probe_exists()
+    pdf_path = _get_or_create_temp_pdf(pdf_bytes)
 
-    tmp_pdf: Optional[Path] = None
     tmp_png: Optional[Path] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
-            pdf_f.write(pdf_bytes)
-            tmp_pdf = Path(pdf_f.name)
-
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as png_f:
+        with tempfile.NamedTemporaryFile(suffix=".png", dir=_TMP_DIR, delete=False) as png_f:
             tmp_png = Path(png_f.name)
 
         cmd = [
@@ -92,7 +142,7 @@ def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
             str(dpi),
             "--out",
             str(tmp_png),
-            str(tmp_pdf),
+            str(pdf_path),
         ]
         proc = subprocess.run(
             cmd,
@@ -114,26 +164,23 @@ def _run_probe_render(pdf_bytes: bytes, page_number: int, dpi: int) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao renderizar página PDF.") from exc
     finally:
-        _safe_unlink(tmp_pdf)
         _safe_unlink(tmp_png)
 
 
 def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dict[str, Any], bytes]:
     _ensure_probe_exists()
+    pdf_path = _get_or_create_temp_pdf(pdf_bytes)
 
-    tmp_pdf: Optional[Path] = None
     tmp_json: Optional[Path] = None
     tmp_out: Optional[Path] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
-            pdf_f.write(pdf_bytes)
-            tmp_pdf = Path(pdf_f.name)
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as js_f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", dir=_TMP_DIR, delete=False, mode="w", encoding="utf-8"
+        ) as js_f:
             json.dump(field_values or {}, js_f, ensure_ascii=False, separators=(",", ":"))
             tmp_json = Path(js_f.name)
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", dir=_TMP_DIR, delete=False) as out_f:
             tmp_out = Path(out_f.name)
 
         cmd = [
@@ -143,7 +190,7 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
             str(tmp_json),
             "--out",
             str(tmp_out),
-            str(tmp_pdf),
+            str(pdf_path),
         ]
         proc = subprocess.run(
             cmd,
@@ -175,31 +222,33 @@ def _run_probe_eval(pdf_bytes: bytes, field_values: Dict[str, Any]) -> tuple[Dic
         if not tmp_out.exists() or tmp_out.stat().st_size == 0:
             raise PdfEngineError("pdfcraft_probe eval não gerou o arquivo PDF de saída.")
 
-        fields_out = payload.get("fields") if isinstance(payload, dict) and isinstance(payload.get("fields"), dict) else {}
+        fields_out = (
+            payload.get("fields")
+            if isinstance(payload, dict) and isinstance(payload.get("fields"), dict)
+            else {}
+        )
         return fields_out, tmp_out.read_bytes()
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao avaliar campos no PDF.") from exc
     finally:
-        _safe_unlink(tmp_pdf)
         _safe_unlink(tmp_json)
         _safe_unlink(tmp_out)
 
+
 def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
     _ensure_probe_exists()
+    pdf_path = _get_or_create_temp_pdf(pdf_bytes)
 
-    tmp_pdf: Optional[Path] = None
     tmp_json: Optional[Path] = None
     tmp_out: Optional[Path] = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_f:
-            pdf_f.write(pdf_bytes)
-            tmp_pdf = Path(pdf_f.name)
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w", encoding="utf-8") as js_f:
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", dir=_TMP_DIR, delete=False, mode="w", encoding="utf-8"
+        ) as js_f:
             json.dump(field_values or {}, js_f, ensure_ascii=False, separators=(",", ":"))
             tmp_json = Path(js_f.name)
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as out_f:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", dir=_TMP_DIR, delete=False) as out_f:
             tmp_out = Path(out_f.name)
 
         cmd = [
@@ -209,7 +258,7 @@ def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
             str(tmp_json),
             "--out",
             str(tmp_out),
-            str(tmp_pdf),
+            str(pdf_path),
         ]
         proc = subprocess.run(
             cmd,
@@ -231,7 +280,6 @@ def _run_probe_export(pdf_bytes: bytes, field_values: Dict[str, Any]) -> bytes:
     except subprocess.TimeoutExpired as exc:
         raise PdfEngineError("Tempo limite excedido ao exportar PDF.") from exc
     finally:
-        _safe_unlink(tmp_pdf)
         _safe_unlink(tmp_json)
         _safe_unlink(tmp_out)
 
@@ -260,7 +308,11 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
     page_dims: Dict[int, tuple[float, float]] = {}
     for idx in range(total_pages):
         p_num = idx + 1
-        p_entry = raw_pages[idx] if idx < len(raw_pages) and isinstance(raw_pages[idx], dict) else {}
+        p_entry = (
+            raw_pages[idx]
+            if idx < len(raw_pages) and isinstance(raw_pages[idx], dict)
+            else {}
+        )
         w = float(p_entry.get("width") or 612.0)
         h = float(p_entry.get("height") or 792.0)
         page_dims[p_num] = (w, h)
@@ -307,7 +359,9 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
         }
         normalized_fields.append(norm_field)
 
-        target_page = page_num if page_num in fields_by_page else (1 if 1 in fields_by_page else None)
+        target_page = (
+            page_num if page_num in fields_by_page else (1 if 1 in fields_by_page else None)
+        )
         if target_page is not None:
             fields_by_page[target_page].append(norm_field)
 
@@ -315,20 +369,24 @@ def inspect_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
     for p_idx in range(total_pages):
         p_num = p_idx + 1
         w, h = page_dims.get(p_num, (612.0, 792.0))
-        pages_out.append({
-            "page": p_num,
-            "width": w,
-            "height": h,
-            "fields": fields_by_page.get(p_num, []),
-        })
+        pages_out.append(
+            {
+                "page": p_num,
+                "width": w,
+                "height": h,
+                "fields": fields_by_page.get(p_num, []),
+            }
+        )
 
     if not pages_out and normalized_fields:
-        pages_out.append({
-            "page": 1,
-            "width": 612.0,
-            "height": 792.0,
-            "fields": normalized_fields,
-        })
+        pages_out.append(
+            {
+                "page": 1,
+                "width": 612.0,
+                "height": 792.0,
+                "fields": normalized_fields,
+            }
+        )
 
     return {
         "total_pages": total_pages,

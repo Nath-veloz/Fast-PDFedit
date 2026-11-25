@@ -8,6 +8,7 @@ import {
   applyStageLayout,
   renderFreeTextsOverlay,
   redrawStrokesCanvas,
+  revokeAllPageUrls,
 } from "./stage.js";
 
 function getPagesContainer() {
@@ -144,11 +145,29 @@ function withPageContext(pageNum, fn) {
   }
 }
 
-async function renderAllPages(_options = {}) {
+async function renderAllPages(options = {}, concurrency = 3) {
   if (!state.fileId) return;
-  for (let p = 1; p <= state.totalPages; p++) {
-    await withPageContext(p, () => loadAndRenderPage(p));
+  const force = Boolean(options?.force);
+
+  if (state.totalPages >= 1) {
+    await withPageContext(1, () => loadAndRenderPage(1, { force }));
+    withPageContext(1, () => applyStageLayout(1));
   }
+
+  let nextPage = 2;
+  const workerCount = Math.min(concurrency, Math.max(0, state.totalPages - 1));
+
+  async function worker() {
+    while (nextPage <= state.totalPages) {
+      const p = nextPage++;
+      await withPageContext(p, () => loadAndRenderPage(p, { force }));
+    }
+  }
+
+  if (workerCount > 0) {
+    await Promise.all(Array.from({ length: workerCount }, worker));
+  }
+
   applyAllPagesLayout();
 }
 
@@ -204,6 +223,7 @@ function undoLastAction() {
 async function handleFileSelected(file) {
   if (!file) return;
   clearTimeout(state.evalTimer);
+  revokeAllPageUrls();
   if (state.fileId) {
     closeServerSession(state.fileId);
     state.fileId = null;
@@ -245,6 +265,7 @@ async function handleFileSelected(file) {
     container.classList.remove("hidden");
     container.classList.add("flex");
     buildPageStages();
+    applyAllPagesLayout();
 
     els.exportBtn.disabled = false;
     els.statusText.textContent = "";
@@ -254,9 +275,12 @@ async function handleFileSelected(file) {
 
     if (restored) {
       showToast("Rascunho anterior restaurado.");
-      await evaluateWithEngine({ rerenderPage: true, onlyDirty: false }, renderAllPages);
+      await evaluateWithEngine(
+        { rerenderPage: true, onlyDirty: false },
+        () => renderAllPages({ force: true })
+      );
     } else {
-      await renderAllPages();
+      await renderAllPages({ force: true });
     }
   } catch (err) {
     els.statusText.textContent = `Erro: ${err.message}`;
@@ -312,11 +336,17 @@ function setTool(newTool) {
 }
 
 function setZoom(val) {
+  const prevDpi = state.zoom > 1.25 ? 190 : 115;
   state.zoom = Math.max(0.5, Math.min(2.2, Number(val.toFixed(2))));
+  const nextDpi = state.zoom > 1.25 ? 190 : 115;
   const pct = `${Math.round(state.zoom * 100)}%`;
   els.zoomLabel.textContent = pct;
   els.mZoomLabel.textContent = pct;
   applyAllPagesLayout();
+
+  if (state.fileId && prevDpi !== nextDpi) {
+    renderAllPages({ force: false });
+  }
 }
 
 function getNormCoords(e, canvas) {
@@ -368,6 +398,7 @@ els.saveBtn.addEventListener("click", async () => {
 els.backBtn.addEventListener("click", () => {
   clearTimeout(state.evalTimer);
   saveProgress(false);
+  revokeAllPageUrls();
   closeServerSession(state.fileId);
   state.fileId = null;
   setHeaderMode("home");
@@ -416,6 +447,7 @@ window.addEventListener("mouseup", endDraw);
 window.addEventListener("touchmove", moveDraw, { passive: false });
 window.addEventListener("touchend", endDraw);
 window.addEventListener("beforeunload", () => {
+  revokeAllPageUrls();
   if (state.fileId) {
     closeServerSession(state.fileId);
   }
