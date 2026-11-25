@@ -1,3 +1,4 @@
+import { initHomeWarpGrid, renderHomeWarpGrid } from "./warp-grid.js";
 import { state, els, indexFieldsMetadata, buildPayloadByFieldName } from "./state.js";
 import { closeServerSession, inspectPdfFile, exportFilledPdf } from "./api.js";
 import { showToast, saveProgress, scheduleAutosave, loadSavedProgress } from "./draft.js";
@@ -8,6 +9,20 @@ import {
   renderFreeTextsOverlay,
   redrawStrokesCanvas,
 } from "./stage.js";
+
+function setHeaderMode(mode) {
+  const homeHeader = document.getElementById("homeHeader");
+  const editorHeader = document.getElementById("editorHeader");
+  const isEditor = mode === "editor";
+
+  if (homeHeader) {
+    homeHeader.classList.toggle("hidden", isEditor);
+  }
+  if (editorHeader) {
+    editorHeader.classList.toggle("hidden", !isEditor);
+    editorHeader.classList.toggle("flex", isEditor);
+  }
+}
 
 function pushHistory(action) {
   state.history.push(action);
@@ -71,6 +86,7 @@ async function handleFileSelected(file) {
     indexFieldsMetadata();
     const restored = loadSavedProgress();
 
+    setHeaderMode("editor");
     els.fileNameLabel.textContent = state.filename;
     els.totalPagesLabel.textContent = String(state.totalPages);
     els.pageInput.max = String(state.totalPages);
@@ -82,6 +98,7 @@ async function handleFileSelected(file) {
     els.actionsRight.classList.add("flex");
     els.flattenWrap.classList.remove("hidden");
     els.emptyState.classList.add("hidden");
+    renderHomeWarpGrid();
     els.pageStage.classList.remove("hidden");
     els.exportBtn.disabled = false;
     els.statusText.textContent = "";
@@ -105,12 +122,12 @@ function setFieldHints(enabled) {
   els.widgetsLayer.classList.toggle("show-field-hints", state.showFieldHints);
 
   els.toggleHintsBtn.className = state.showFieldHints
-    ? "px-2 py-1 rounded text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40"
-    : "px-2 py-1 rounded text-xs hover:bg-white/10 text-slate-300";
+    ? "px-2 py-1 rounded text-xs bg-violet-500/30 text-violet-100 border border-violet-400/50"
+    : "px-2 py-1 rounded text-xs hover:bg-violet-500/20 text-slate-300 transition";
 
   els.mToggleHints.className = state.showFieldHints
-    ? "px-2 py-1 rounded bg-blue-500/30 text-blue-200"
-    : "px-2 py-1 rounded bg-white/10";
+    ? "px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40"
+    : "px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25";
 }
 
 function setTool(newTool) {
@@ -121,26 +138,26 @@ function setTool(newTool) {
   const isDraw = newTool === "draw";
 
   els.toolCursorBtn.className = isFields
-    ? "px-2 py-1 rounded text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40"
-    : "px-2 py-1 rounded text-xs hover:bg-white/10 text-slate-300";
+    ? "px-2 py-1 rounded text-xs bg-violet-500/30 text-violet-100 border border-violet-400/50"
+    : "px-2 py-1 rounded text-xs hover:bg-violet-500/20 text-slate-300 transition";
 
   els.toolTextBtn.className = isText
-    ? "w-7 h-7 rounded bg-blue-500/30 text-blue-200 border border-blue-400/40 text-sm font-serif font-bold flex items-center justify-center"
-    : "w-7 h-7 rounded hover:bg-white/10 text-sm font-serif font-bold flex items-center justify-center";
+    ? "w-7 h-7 rounded bg-violet-500/30 text-violet-100 border border-violet-400/50 text-sm font-serif font-bold flex items-center justify-center"
+    : "w-7 h-7 rounded hover:bg-violet-500/20 text-sm font-serif font-bold flex items-center justify-center transition";
 
   els.toolDrawBtn.className = isDraw
-    ? "w-7 h-7 rounded bg-blue-500/30 text-blue-200 border border-blue-400/40 text-sm flex items-center justify-center"
-    : "w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center";
+    ? "w-7 h-7 rounded bg-violet-500/30 text-violet-100 border border-violet-400/50 text-sm flex items-center justify-center"
+    : "w-7 h-7 rounded hover:bg-violet-500/20 text-sm flex items-center justify-center transition";
 
   els.mToolFields.className = isFields
-    ? "px-2 py-1 rounded bg-blue-500/30 text-blue-200"
-    : "px-2 py-1 rounded bg-white/10";
+    ? "px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40"
+    : "px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25";
   els.mToolText.className = isText
-    ? "px-2 py-1 rounded bg-blue-500/30 text-blue-200 font-serif font-bold"
-    : "px-2 py-1 rounded bg-white/10 font-serif font-bold";
+    ? "px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40 font-serif font-bold"
+    : "px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25 font-serif font-bold";
   els.mToolDraw.className = isDraw
-    ? "px-2 py-1 rounded bg-blue-500/30 text-blue-200"
-    : "px-2 py-1 rounded bg-white/10";
+    ? "px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40"
+    : "px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25";
 
   els.widgetsLayer.style.pointerEvents = isFields ? "auto" : "none";
   els.drawCanvas.style.pointerEvents = isDraw ? "auto" : "none";
@@ -211,6 +228,7 @@ els.backBtn.addEventListener("click", () => {
   saveProgress(false);
   closeServerSession(state.fileId);
   state.fileId = null;
+  setHeaderMode("home");
   els.backBtn.classList.add("hidden");
   els.toolbarCenter.classList.add("hidden");
   els.toolbarCenter.classList.remove("md:flex");
@@ -219,7 +237,8 @@ els.backBtn.addEventListener("click", () => {
   els.actionsRight.classList.remove("flex");
   els.pageStage.classList.add("hidden");
   els.emptyState.classList.remove("hidden");
-  els.fileNameLabel.textContent = "Fast-PDFedit";
+  renderHomeWarpGrid();
+  els.fileNameLabel.textContent = "Fast PDFedit";
   els.statusText.textContent = "";
   els.pdfInput.value = "";
   els.pdfInputEmpty.value = "";
@@ -323,3 +342,4 @@ els.exportBtn.addEventListener("click", async () => {
     els.exportBtn.textContent = prev;
   }
 });
+initHomeWarpGrid();

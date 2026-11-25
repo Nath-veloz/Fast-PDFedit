@@ -1,58 +1,76 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" class="scroll-smooth">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0" />
-  <title>Fast-PDFedit</title>
+  <title>Fast PDFedit</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="/static/css/editor.css" />
 </head>
-<body class="bg-[#202124] text-[#e8eaed] h-screen flex flex-col overflow-hidden select-none">
+<body class="bg-[#0c1324] text-slate-100 h-screen flex flex-col overflow-hidden select-none">
 
-  <!-- Barra superior -->
-  <header class="h-12 bg-[#323639] border-b border-black/40 px-2 sm:px-3 flex items-center justify-between gap-1.5 shrink-0 z-30 shadow">
+  <!-- Cabeçalho da página inicial (enxuto e autoral) -->
+  <header id="homeHeader" class="h-14 bg-[#141733]/85 border-b border-violet-400/25 px-4 sm:px-8 flex items-center justify-between gap-4 shrink-0 z-30 backdrop-blur-sm">
+    <a href="#topo" class="flex items-center gap-2.5 text-white font-bold tracking-tight text-base sm:text-lg shrink-0">
+      <span class="w-2.5 h-2.5 rounded-sm bg-violet-400 shadow-[0_0_12px_rgba(167,139,250,0.75)]"></span>
+      <span>Fast <span class="text-violet-300">PDFedit</span></span>
+    </a>
+
+    <nav class="hidden md:flex items-center gap-6 text-xs text-slate-300">
+      <a href="#fluxo" class="hover:text-violet-200 transition">Como funciona</a>
+      <a href="#comunidade" class="hover:text-violet-200 transition">PdfCraft &amp; ArtCraft</a>
+    </nav>
+
+    <label class="cursor-pointer inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg border border-violet-400/35 transition shrink-0">
+      <span>Selecionar PDF</span>
+      <input id="pdfInputEmpty" type="file" accept="application/pdf,.pdf" class="hidden" />
+    </label>
+  </header>
+
+  <!-- Cabeçalho completo do modo de edição (exibido apenas quando um PDF está aberto) -->
+  <header id="editorHeader" class="hidden h-12 bg-[#151836] border-b border-violet-400/25 px-2 sm:px-3 items-center justify-between gap-1.5 shrink-0 z-30 shadow-md">
     <!-- Esquerda: Voltar + Abrir + Nome -->
     <div class="flex items-center gap-1.5 min-w-0">
       <button
         id="backBtn"
         type="button"
-        class="hidden px-2 py-1.5 rounded bg-white/10 hover:bg-white/20 text-xs font-medium text-slate-100 shrink-0"
-        title="Voltar para seleção de arquivo"
+        class="px-2 py-1.5 rounded bg-violet-500/15 hover:bg-violet-500/25 border border-violet-400/30 text-xs font-medium text-violet-100 shrink-0 transition"
+        title="Voltar para a página inicial"
       >
         ← Voltar
       </button>
       <label
         title="Abrir outro PDF"
-        class="cursor-pointer px-2 py-1.5 rounded hover:bg-white/10 text-xs font-medium text-slate-200 shrink-0"
+        class="cursor-pointer px-2 py-1.5 rounded hover:bg-violet-500/20 text-xs font-medium text-slate-200 shrink-0 transition"
       >
         <span>Abrir</span>
         <input id="pdfInput" type="file" accept="application/pdf,.pdf" class="hidden" />
       </label>
-      <span id="fileNameLabel" class="text-xs sm:text-sm text-slate-200 truncate">Fast-PDFedit</span>
+      <span id="fileNameLabel" class="text-xs sm:text-sm text-slate-200 truncate">Fast PDFedit</span>
     </div>
 
     <!-- Centro: Páginas + Zoom + Ferramentas (desktop/tablet) -->
     <div id="toolbarCenter" class="hidden md:flex items-center gap-1.5">
-      <div class="flex items-center bg-[#1f2224] rounded px-1.5 py-0.5 text-xs gap-1">
-        <button id="prevPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-white/10 rounded" title="Página anterior">‹</button>
+      <div class="flex items-center bg-[#0b1020] border border-violet-400/20 rounded px-1.5 py-0.5 text-xs gap-1">
+        <button id="prevPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-violet-500/25 rounded transition" title="Página anterior">‹</button>
         <input id="pageInput" type="number" min="1" value="1" class="w-8 bg-transparent text-center text-xs outline-none" />
         <span class="text-slate-400">/</span>
         <span id="totalPagesLabel" class="text-slate-300 pr-1">1</span>
-        <button id="nextPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-white/10 rounded" title="Próxima página">›</button>
+        <button id="nextPageBtn" type="button" class="px-1.5 py-0.5 hover:bg-violet-500/25 rounded transition" title="Próxima página">›</button>
       </div>
 
-      <div class="h-4 w-px bg-white/15 mx-1"></div>
+      <div class="h-4 w-px bg-violet-400/20 mx-1"></div>
 
-      <button id="zoomOutBtn" type="button" class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center" title="Diminuir zoom">−</button>
+      <button id="zoomOutBtn" type="button" class="w-7 h-7 rounded hover:bg-violet-500/20 text-sm flex items-center justify-center transition" title="Diminuir zoom">−</button>
       <span id="zoomLabel" class="text-xs w-11 text-center text-slate-200">100%</span>
-      <button id="zoomInBtn" type="button" class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center" title="Aumentar zoom">+</button>
+      <button id="zoomInBtn" type="button" class="w-7 h-7 rounded hover:bg-violet-500/20 text-sm flex items-center justify-center transition" title="Aumentar zoom">+</button>
 
-      <div class="h-4 w-px bg-white/15 mx-1"></div>
+      <div class="h-4 w-px bg-violet-400/20 mx-1"></div>
 
       <button
         id="toolCursorBtn"
         type="button"
-        class="px-2 py-1 rounded text-xs bg-blue-500/30 text-blue-200 border border-blue-400/40"
+        class="px-2 py-1 rounded text-xs bg-violet-500/30 text-violet-100 border border-violet-400/50"
         title="Preencher campos"
       >
         Campos
@@ -60,7 +78,7 @@
       <button
         id="toggleHintsBtn"
         type="button"
-        class="px-2 py-1 rounded text-xs hover:bg-white/10 text-slate-300"
+        class="px-2 py-1 rounded text-xs hover:bg-violet-500/20 text-slate-300 transition"
         title="Mostrar ou ocultar contorno dos campos editáveis"
       >
         Realçar
@@ -68,7 +86,7 @@
       <button
         id="toolTextBtn"
         type="button"
-        class="w-7 h-7 rounded hover:bg-white/10 text-sm font-serif font-bold flex items-center justify-center"
+        class="w-7 h-7 rounded hover:bg-violet-500/20 text-sm font-serif font-bold flex items-center justify-center transition"
         title="Adicionar texto na página"
       >
         T
@@ -76,7 +94,7 @@
       <button
         id="toolDrawBtn"
         type="button"
-        class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center"
+        class="w-7 h-7 rounded hover:bg-violet-500/20 text-sm flex items-center justify-center transition"
         title="Desenho livre"
       >
         ✎
@@ -84,7 +102,7 @@
       <button
         id="undoBtn"
         type="button"
-        class="w-7 h-7 rounded hover:bg-white/10 text-sm flex items-center justify-center disabled:opacity-30"
+        class="w-7 h-7 rounded hover:bg-violet-500/20 text-sm flex items-center justify-center disabled:opacity-30 transition"
         title="Desfazer"
         disabled
       >
@@ -95,72 +113,171 @@
     <!-- Direita: Fixar + Salvar + Baixar -->
     <div id="actionsRight" class="hidden items-center gap-1.5 shrink-0">
       <label id="flattenWrap" class="hidden lg:flex items-center gap-1 text-xs text-slate-300 cursor-pointer mr-1" title="Fixa os textos no PDF para abrir igual em qualquer lugar">
-        <input id="flattenCheckbox" type="checkbox" checked class="accent-blue-500 rounded" />
+        <input id="flattenCheckbox" type="checkbox" checked class="accent-violet-500 rounded" />
         <span>Fixar</span>
       </label>
       <button
         id="saveBtn"
         type="button"
-        class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-semibold text-xs px-2.5 py-1.5 rounded transition"
-        title="Salvar progresso atual para continuar editando"
+        class="bg-violet-500/20 hover:bg-violet-500/30 text-violet-100 border border-violet-400/40 font-semibold text-xs px-2.5 py-1.5 rounded transition"
+        title="Salvar rascunho no navegador para continuar depois"
       >
         Salvar
       </button>
       <button
         id="exportBtn"
         type="button"
-        class="bg-[#8ab4f8] hover:bg-[#aecbfa] disabled:bg-slate-700 disabled:text-slate-400 text-[#202124] font-semibold text-xs px-2.5 sm:px-3 py-1.5 rounded transition"
+        class="bg-violet-600 hover:bg-violet-500 disabled:bg-slate-800 disabled:text-slate-500 text-white font-semibold text-xs px-2.5 sm:px-3 py-1.5 rounded transition shadow-sm shadow-violet-950/70"
       >
         Baixar
       </button>
     </div>
   </header>
 
-  <!-- Barra compacta para celular / telas menores -->
-  <div id="mobileSubbar" class="hidden md:hidden bg-[#292b2e] border-b border-black/40 px-2 py-1.5 flex items-center justify-between gap-1 text-xs shrink-0">
+  <!-- Barra compacta para celular / telas menores (apenas na edição) -->
+  <div id="mobileSubbar" class="hidden md:hidden bg-[#121730] border-b border-violet-400/20 px-2 py-1.5 flex items-center justify-between gap-1 text-xs shrink-0">
     <div class="flex items-center gap-1">
-      <button id="mPrevBtn" type="button" class="px-2 py-1 bg-white/10 rounded">‹</button>
+      <button id="mPrevBtn" type="button" class="px-2 py-1 bg-violet-500/15 hover:bg-violet-500/25 rounded">‹</button>
       <span id="mPageLabel" class="px-1">1 / 1</span>
-      <button id="mNextBtn" type="button" class="px-2 py-1 bg-white/10 rounded">›</button>
+      <button id="mNextBtn" type="button" class="px-2 py-1 bg-violet-500/15 hover:bg-violet-500/25 rounded">›</button>
     </div>
     <div class="flex items-center gap-1">
-      <button id="mZoomOut" type="button" class="px-2 py-1 bg-white/10 rounded">−</button>
+      <button id="mZoomOut" type="button" class="px-2 py-1 bg-violet-500/15 hover:bg-violet-500/25 rounded">−</button>
       <span id="mZoomLabel" class="px-1">100%</span>
-      <button id="mZoomIn" type="button" class="px-2 py-1 bg-white/10 rounded">+</button>
+      <button id="mZoomIn" type="button" class="px-2 py-1 bg-violet-500/15 hover:bg-violet-500/25 rounded">+</button>
     </div>
     <div class="flex items-center gap-1">
-      <button id="mToolFields" type="button" class="px-2 py-1 rounded bg-blue-500/30 text-blue-200">Campos</button>
-      <button id="mToggleHints" type="button" class="px-2 py-1 rounded bg-white/10">Realçar</button>
-      <button id="mToolText" type="button" class="px-2 py-1 rounded bg-white/10 font-serif font-bold">T</button>
-      <button id="mToolDraw" type="button" class="px-2 py-1 rounded bg-white/10">✎</button>
-      <button id="mUndo" type="button" class="px-2 py-1 rounded bg-white/10 disabled:opacity-30" disabled>↶</button>
+      <button id="mToolFields" type="button" class="px-2 py-1 rounded bg-violet-500/30 text-violet-100 border border-violet-400/40">Campos</button>
+      <button id="mToggleHints" type="button" class="px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25">Realçar</button>
+      <button id="mToolText" type="button" class="px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25 font-serif font-bold">T</button>
+      <button id="mToolDraw" type="button" class="px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25">✎</button>
+      <button id="mUndo" type="button" class="px-2 py-1 rounded bg-violet-500/15 hover:bg-violet-500/25 disabled:opacity-30" disabled>↶</button>
     </div>
   </div>
 
   <!-- Aviso rápido de salvamento -->
-  <div id="toastBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-[#1f2224] text-emerald-300 border border-emerald-500/40 text-xs px-3.5 py-2 rounded-lg shadow-lg"></div>
+  <div id="toastBanner" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-[#1c1633] text-violet-100 border border-violet-400/45 text-xs px-3.5 py-2 rounded-lg shadow-lg"></div>
 
-  <!-- Área central -->
-  <main id="viewport" class="flex-1 overflow-auto p-3 sm:p-6 flex flex-col items-center">
-    <div id="emptyState" class="my-auto max-w-md w-full bg-[#292b2e] border border-white/10 rounded-xl p-6 text-center space-y-3 shadow-lg">
-      <h2 class="text-base font-semibold text-white">Fast-PDFedit</h2>
-      <p class="text-xs text-slate-300 leading-relaxed">
-        Abra uma ficha ou PDF editável para preencher os campos diretamente na página, salvar seu progresso e baixar — sem conta.
-      </p>
-      <label class="inline-block cursor-pointer bg-[#8ab4f8] hover:bg-[#aecbfa] text-[#202124] font-semibold text-xs px-4 py-2.5 rounded-lg">
-        Selecionar PDF
-        <input id="pdfInputEmpty" type="file" accept="application/pdf,.pdf" class="hidden" />
-      </label>
-      <p id="statusText" class="text-xs text-slate-400 min-h-[1rem]"></p>
-    </div>
+  <!-- Área central (grade apenas na página inicial, rolando junto com o conteúdo) -->
+  <div id="siteBackdrop" class="bg-[#0c1324] relative flex-1 min-h-0 flex flex-col overflow-hidden">
+    <main id="viewport" class="relative z-10 flex-1 min-h-0 overflow-auto flex flex-col">
+      <!-- Página inicial aberta e editorial -->
+      <div id="emptyState" class="relative min-h-full w-full">
+        <canvas id="homeWarpCanvas" class="absolute inset-0 w-full h-full pointer-events-none z-0" aria-hidden="true"></canvas>
 
-    <div id="pageStage" class="hidden relative bg-white shadow-2xl">
-      <img id="pageImage" alt="Página PDF" class="block select-none pointer-events-none" />
-      <div id="widgetsLayer" class="absolute inset-0"></div>
-      <canvas id="drawCanvas" class="absolute inset-0"></canvas>
-      <div id="freeTextsLayer" class="absolute inset-0 pointer-events-none"></div>
-    </div>
-  </main>
+        <div id="topo" class="relative z-10 max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-14 space-y-12">
+
+          <!-- Hero / abertura com brilho roxo suave atrás do texto -->
+          <section class="hero-violet-glow relative">
+            <div class="relative z-10 space-y-5">
+              <div class="text-xs font-medium text-violet-200/90 tracking-wide">
+                Preenchimento local de formulários PDF com recálculo
+              </div>
+
+              <h1 class="text-3xl sm:text-5xl font-bold tracking-tight text-white max-w-3xl leading-tight">
+                Fast <span class="text-violet-300">PDFedit</span>
+              </h1>
+
+              <p class="text-sm sm:text-base text-slate-300 max-w-2xl leading-relaxed">
+                Abra formulários, fichas e PDFs interativos direto no navegador, acompanhe cálculos automáticos, salve rascunhos locais para retomar quando quiser e baixe uma nova cópia preservando o arquivo original.
+              </p>
+
+              <div class="pt-1 flex flex-wrap items-center gap-4">
+                <label class="cursor-pointer inline-flex items-center gap-2.5 bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm px-5 py-3 rounded-xl border border-violet-400/40 shadow-lg shadow-violet-950/80 transition">
+                  <span>Selecionar PDF</span>
+                  <input type="file" accept="application/pdf,.pdf" class="hidden" onchange="document.getElementById('pdfInputEmpty').files = this.files; document.getElementById('pdfInputEmpty').dispatchEvent(new Event('change', { bubbles: true }));" />
+                </label>
+                <span class="text-xs text-violet-200/80">
+                  Sem envio para nuvem • Rascunhos no navegador
+                </span>
+              </div>
+
+              <p id="statusText" class="text-xs text-amber-300 min-h-[1.25rem]"></p>
+            </div>
+          </section>
+
+          <!-- Seção de fluxo com sombreado/blur suave atrás da faixa -->
+          <section id="fluxo" class="fluxo-backdrop-band relative space-y-4 border-b border-violet-400/20 py-6 px-4 sm:px-6 -mx-4 sm:-mx-6 rounded-2xl">
+            <h2 class="text-xs font-semibold uppercase tracking-widest text-violet-300">
+              Como funciona
+            </h2>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
+              <div class="space-y-1.5 border-l-2 border-violet-400/50 pl-4">
+                <h3 class="font-semibold text-white">Preencher e recalcular</h3>
+                <p>Altere campos, caixas de seleção, textos livres e traços na página enquanto o motor avalia valores e atualiza a visualização.</p>
+              </div>
+
+              <div class="space-y-1.5 border-l-2 border-violet-400/50 pl-4">
+                <h3 class="font-semibold text-white">Salvar no navegador</h3>
+                <p>O botão <strong>Salvar</strong> mantém um rascunho no cache local do navegador para continuar depois sem sobrecarregar a memória do servidor.</p>
+              </div>
+
+              <div class="space-y-1.5 border-l-2 border-violet-400/50 pl-4">
+                <h3 class="font-semibold text-white">Baixar como novo arquivo</h3>
+                <p>O botão <strong>Baixar</strong> gera uma nova cópia em PDF com as alterações aplicadas, sem alterar o documento original no disco.</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Seção dedicada ao PdfCraft, ArtCraft e comunidade no Discord com brilho roxo suave atrás -->
+          <section id="comunidade" class="pdfcraft-violet-glow relative space-y-4 py-2">
+            <div class="relative z-10 space-y-4">
+              <h2 class="text-xs font-semibold uppercase tracking-widest text-violet-300">
+                PdfCraft &amp; grupo ArtCraft
+              </h2>
+
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                <div class="lg:col-span-7 space-y-3 text-xs sm:text-sm text-slate-300 leading-relaxed">
+                  <p>
+                    O motor de inspeção, renderização e manipulação de formulários do <strong class="text-white">Fast PDFedit</strong> é construído sobre <strong class="text-violet-200">PdfCraft</strong>, um leitor e editor de PDF open-source desenvolvido em Rust pelo grupo <strong class="text-violet-200">ArtCraft</strong>.
+                  </p>
+                  <p>
+                    Respeitando a licença do projeto, deixamos aqui o crédito direto ao trabalho da equipe <strong class="text-white">ArtCraft</strong> e ao ecossistema <strong class="text-white">PdfCraft</strong>.
+                  </p>
+                </div>
+
+                <div class="lg:col-span-5 bg-violet-950/35 border border-violet-400/30 rounded-xl p-5 space-y-3">
+                  <h3 class="text-sm font-semibold text-white">
+                    Comunidade no Discord
+                  </h3>
+                  <p class="text-xs text-slate-300 leading-relaxed">
+                    Acompanhe novidades, tire dúvidas técnicas, veja outros projetos criativos e participe das conversas com a comunidade do <strong class="text-violet-200">ArtCraft</strong> e <strong class="text-violet-200">PdfCraft</strong> no Discord.
+                  </p>
+                  <div class="pt-1 flex flex-wrap items-center gap-3">
+                    <a
+                      href="https://discord.gg/artcraft"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center gap-2 bg-violet-500/25 hover:bg-violet-500/35 text-violet-100 border border-violet-400/45 font-semibold text-xs px-4 py-2 rounded-lg transition"
+                    >
+                      <span>Entrar no Discord do ArtCraft</span>
+                    </a>
+                    <a
+                      href="https://getartcraft.com/apps/pdfcraft"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-xs text-violet-300 hover:text-violet-200 underline underline-offset-4"
+                    >
+                      Página do PdfCraft
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <div id="pageStage" class="hidden relative bg-white shadow-2xl mx-auto my-4 sm:my-6">
+        <img id="pageImage" alt="Página PDF" class="block select-none pointer-events-none" />
+        <div id="widgetsLayer" class="absolute inset-0"></div>
+        <canvas id="drawCanvas" class="absolute inset-0"></canvas>
+        <div id="freeTextsLayer" class="absolute inset-0 pointer-events-none"></div>
+      </div>
+    </main>
+  </div>
 
   <script type="module" src="/static/js/main.js"></script>
 </body>

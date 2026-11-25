@@ -1,3 +1,57 @@
+.home-warp-container {
+  background-color: #0c1324;
+}
+
+/* Sombreado e blur suave atrás da faixa "Como funciona" para melhorar a leitura */
+.hero-violet-glow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -1rem;
+  width: min(32rem, 85%);
+  height: 14rem;
+  background: radial-gradient(
+    circle at 28% 48%,
+    rgba(139, 92, 246, 0.22),
+    rgba(109, 40, 217, 0.08) 55%,
+    transparent 75%
+  );
+  filter: blur(22px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.fluxo-backdrop-band {
+  background: linear-gradient(
+    180deg,
+    rgba(12, 19, 36, 0.42) 0%,
+    rgba(15, 22, 44, 0.68) 50%,
+    rgba(12, 19, 36, 0.42) 100%
+  );
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  box-shadow: 0 12px 32px -12px rgba(5, 9, 20, 0.65);
+}
+
+/* Brilho roxo suave atrás do trecho sobre o PdfCraft e grupo ArtCraft */
+.pdfcraft-violet-glow::before {
+  content: "";
+  position: absolute;
+  left: -3rem;
+  top: -1rem;
+  width: min(38rem, 95vw);
+  height: 16rem;
+  background: radial-gradient(
+    ellipse at 25% 45%,
+    rgba(139, 92, 246, 0.2),
+    rgba(124, 58, 237, 0.08) 55%,
+    transparent 78%
+  );
+  filter: blur(20px);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .pdf-widget-input {
   position: absolute;
   background: transparent;
@@ -12,21 +66,21 @@
   transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
-/* Modo opcional "Destacar campos" ativado pelo botão na barra */
+/* Modo opcional "Realçar" ativado pelo botão na barra */
 .show-field-hints .pdf-widget-input {
-  background: rgba(138, 180, 248, 0.14);
-  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(139, 92, 246, 0.48);
 }
 
 .pdf-widget-input:hover {
-  background: rgba(138, 180, 248, 0.12);
-  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(167, 139, 250, 0.6);
 }
 
 .pdf-widget-input:focus {
   background: rgba(255, 255, 255, 0.96);
-  border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.28), inset 0 -1.5px 0 rgba(251, 191, 36, 0.85);
   z-index: 25;
 }
 
@@ -35,7 +89,7 @@
   margin: 0;
   padding: 0;
   cursor: pointer;
-  accent-color: #2563eb;
+  accent-color: #7c3aed;
   opacity: 0;
   transition: opacity 0.12s ease;
 }
