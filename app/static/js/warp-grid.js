@@ -215,7 +215,7 @@ function computeWarpScale(width) {
   }
   // Suavização ampliada em telas pequenas (< 640px)
   const ratio = Math.max(0, Math.min(1, (width - 320) / (640 - 320)));
-  return 0.34 + ratio * 0.20;
+  return 0.35 + ratio * 0.20;
 }
 
 export function renderHomeWarpGrid() {
