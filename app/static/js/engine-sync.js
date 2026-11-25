@@ -38,6 +38,9 @@ export async function evaluateWithEngine(
     state.evalPending = true;
     state.evalRerenderPending = state.evalRerenderPending || rerenderPage;
     state.evalForceFullPending = state.evalForceFullPending || !onlyDirty;
+    if (typeof onRerender === "function") {
+      state._onRerenderPending = onRerender;
+    }
     return;
   }
 
@@ -45,14 +48,17 @@ export async function evaluateWithEngine(
   state.evalPending = false;
   const shouldRerender = rerenderPage || state.evalRerenderPending;
   const effectiveOnlyDirty = onlyDirty && !state.evalForceFullPending;
+  const effectiveRerenderFn = onRerender || state._onRerenderPending || null;
+
   state.evalRerenderPending = false;
   state.evalForceFullPending = false;
+  state._onRerenderPending = null;
 
   try {
     const payloadFields = buildPayloadByFieldName({ onlyDirty: effectiveOnlyDirty });
     if (effectiveOnlyDirty && Object.keys(payloadFields).length === 0) {
-      if (shouldRerender && typeof onRerender === "function") {
-        await onRerender();
+      if (shouldRerender && typeof effectiveRerenderFn === "function") {
+        await effectiveRerenderFn();
       }
       return;
     }
@@ -88,8 +94,8 @@ export async function evaluateWithEngine(
       scheduleAutosave();
     }
 
-    if (shouldRerender && typeof onRerender === "function") {
-      await onRerender();
+    if (shouldRerender && typeof effectiveRerenderFn === "function") {
+      await effectiveRerenderFn();
     }
   } catch (err) {
     console.warn("Erro ao avaliar campos:", err);
@@ -98,18 +104,33 @@ export async function evaluateWithEngine(
     if (state.evalPending) {
       const nextRerender = state.evalRerenderPending;
       const nextOnlyDirty = !state.evalForceFullPending;
+      const nextRerenderFn = state._onRerenderPending || effectiveRerenderFn;
       state.evalPending = false;
       state.evalRerenderPending = false;
       state.evalForceFullPending = false;
-      await evaluateWithEngine({ rerenderPage: nextRerender, onlyDirty: nextOnlyDirty }, onRerender);
+      state._onRerenderPending = null;
+      await evaluateWithEngine(
+        { rerenderPage: nextRerender, onlyDirty: nextOnlyDirty },
+        nextRerenderFn
+      );
     }
   }
 }
 
-export function scheduleEvaluate({ delayMs = 220, rerenderPage = false } = {}, onRerender = null) {
+export function scheduleEvaluate({ delayMs = 90, rerenderPage = false } = {}, onRerender = null) {
   if (!state.fileId) return;
   clearTimeout(state.evalTimer);
   state.evalTimer = setTimeout(() => {
     evaluateWithEngine({ rerenderPage, onlyDirty: true }, onRerender);
   }, delayMs);
+}
+
+export async function flushEvaluate(
+  { rerenderPage = true, onlyDirty = true } = {},
+  onRerender = null
+) {
+  if (!state.fileId) return;
+  clearTimeout(state.evalTimer);
+  state.evalTimer = null;
+  await evaluateWithEngine({ rerenderPage, onlyDirty }, onRerender);
 }

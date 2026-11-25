@@ -1,7 +1,8 @@
-import { state, els } from "./state.js";
+import { state, els, normalizeFieldValueForCompare } from "./state.js";
 import { renderPdfPage } from "./api.js";
-import { scheduleAutosave } from "./draft.js";
-import { scheduleEvaluate } from "./engine-sync.js";
+import { scheduleAutosave, saveProgress } from "./draft.js";
+import { scheduleEvaluate, evaluateWithEngine } from "./engine-sync.js";
+import { recordFieldChange } from "./main.js";
 
 function getStageElements(pageNum) {
   const container = els.pagesContainer || document.getElementById("pagesContainer");
@@ -111,12 +112,54 @@ function isFieldInteractive(f, width, height) {
   return true;
 }
 
+function positionWidgetElement(el, f, left, top, width, height) {
+  if (f.type === "CheckBox") {
+    const boxSize = Math.min(20, Math.max(12, Math.min(width, height)));
+    el.style.left = `${left + Math.max(0, (width - boxSize) / 2)}px`;
+    el.style.top = `${top + Math.max(0, (height - boxSize) / 2)}px`;
+    el.style.width = `${boxSize}px`;
+    el.style.height = `${boxSize}px`;
+    el.checked = Boolean(state.fieldValues[f.id]);
+    return;
+  }
+
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+  el.style.width = `${Math.max(10, width)}px`;
+  el.style.height = `${Math.max(10, height)}px`;
+  el.style.lineHeight = `${Math.max(10, height - 2)}px`;
+  el.style.fontSize = `${Math.max(8, Math.min(13.5, height * 0.62))}px`;
+  el.style.textAlign = width <= 45 ? "center" : "left";
+
+  const isFocused = document.activeElement === el;
+  if (!isFocused) {
+    const nextVal = String(state.fieldValues[f.id] ?? "");
+    if (el.value !== nextVal) {
+      el.value = nextVal;
+    }
+    el.style.color = "transparent";
+  } else {
+    el.style.color = "#0f172a";
+  }
+}
+
 function renderWidgetsOverlay(pageNum, w, h, fields) {
   const target = getStageElements(pageNum);
   if (!target?.widgetsLayer) return;
 
   target.widgetsLayer.classList.toggle("show-field-hints", Boolean(state.showFieldHints));
-  target.widgetsLayer.innerHTML = "";
+
+  const existingById = new Map();
+  for (const child of target.widgetsLayer.querySelectorAll("[data-field-id]")) {
+    existingById.set(child.dataset.fieldId, child);
+  }
+
+  const activeEl = document.activeElement;
+  const activeFieldId =
+    activeEl && target.widgetsLayer.contains(activeEl) ? activeEl.dataset.fieldId : null;
+
+  const nextFragment = document.createDocumentFragment();
+  const seenIds = new Set();
 
   for (const f of fields) {
     const [x0, y0, x1, y1] = f.rect || [0, 0, 0, 0];
@@ -129,54 +172,115 @@ function renderWidgetsOverlay(pageNum, w, h, fields) {
       continue;
     }
 
-    if (f.type === "CheckBox") {
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.className = "pdf-widget-checkbox";
-      cb.dataset.fieldId = f.id;
-      cb.checked = Boolean(state.fieldValues[f.id]);
-      const boxSize = Math.min(20, Math.max(12, Math.min(width, height)));
-      cb.style.left = `${left + Math.max(0, (width - boxSize) / 2)}px`;
-      cb.style.top = `${top + Math.max(0, (height - boxSize) / 2)}px`;
-      cb.style.width = `${boxSize}px`;
-      cb.style.height = `${boxSize}px`;
-      cb.addEventListener("change", () => {
-        state.fieldValues[f.id] = cb.checked;
-        scheduleAutosave();
-        scheduleEvaluate({ delayMs: 40, rerenderPage: true }, () => loadAndRenderAllPages({ force: true }));
-      });
-      target.widgetsLayer.appendChild(cb);
-    } else {
-      const inp = document.createElement("input");
-      inp.type = "text";
-      inp.className = "pdf-widget-input";
-      inp.dataset.fieldId = f.id;
-      inp.value = state.fieldValues[f.id] ?? "";
-      inp.title = f.label || f.name;
-      inp.style.left = `${left}px`;
-      inp.style.top = `${top}px`;
-      inp.style.width = `${Math.max(10, width)}px`;
-      inp.style.height = `${Math.max(10, height)}px`;
-      inp.style.lineHeight = `${Math.max(10, height - 2)}px`;
-      inp.style.fontSize = `${Math.max(8, Math.min(13.5, height * 0.62))}px`;
-      inp.style.textAlign = width <= 45 ? "center" : "left";
-      inp.style.color = "transparent";
+    seenIds.add(f.id);
+    const existing = existingById.get(f.id);
 
-      inp.addEventListener("focus", () => {
-        inp.style.color = "#0f172a";
-      });
-      inp.addEventListener("input", () => {
-        state.fieldValues[f.id] = inp.value;
-        scheduleAutosave();
-        scheduleEvaluate({ delayMs: 220, rerenderPage: false });
-      });
-      inp.addEventListener("blur", () => {
+    if (f.type === "CheckBox") {
+      const cb = existing && existing.type === "checkbox" ? existing : document.createElement("input");
+      if (!existing || existing.type !== "checkbox") {
+        cb.type = "checkbox";
+        cb.className = "pdf-widget-checkbox";
+        cb.dataset.fieldId = f.id;
+        cb.addEventListener("change", () => {
+          const prevVal = normalizeFieldValueForCompare(f.type, state.fieldValues[f.id]);
+          const nextVal = normalizeFieldValueForCompare(f.type, cb.checked);
+          state.fieldValues[f.id] = nextVal;
+          recordFieldChange(f.id, prevVal, nextVal);
+          saveProgress(false);
+          scheduleEvaluate({ delayMs: 40, rerenderPage: true }, () =>
+            loadAndRenderAllPages({ force: true })
+          );
+        });
+      }
+      positionWidgetElement(cb, f, left, top, width, height);
+      nextFragment.appendChild(cb);
+    } else {
+      const inp =
+        existing && existing.type === "text" ? existing : document.createElement("input");
+      if (!existing || existing.type !== "text") {
+        inp.type = "text";
+        inp.className = "pdf-widget-input";
+        inp.dataset.fieldId = f.id;
+        inp.value = String(state.fieldValues[f.id] ?? "");
+        inp.title = f.label || f.name;
         inp.style.color = "transparent";
-        scheduleEvaluate({ delayMs: 0, rerenderPage: true }, () => loadAndRenderAllPages({ force: true }));
-      });
-      target.widgetsLayer.appendChild(inp);
+
+        let focusStartVal = normalizeFieldValueForCompare(f.type, state.fieldValues[f.id]);
+        let submittingEnter = false;
+
+        inp.addEventListener("focus", () => {
+          focusStartVal = normalizeFieldValueForCompare(f.type, state.fieldValues[f.id]);
+          inp.style.color = "#0f172a";
+        });
+
+        inp.addEventListener("input", () => {
+          state.fieldValues[f.id] = normalizeFieldValueForCompare(f.type, inp.value);
+          scheduleAutosave();
+          scheduleEvaluate({ delayMs: 220, rerenderPage: false });
+        });
+
+        inp.addEventListener("blur", () => {
+          const nextVal = normalizeFieldValueForCompare(f.type, inp.value);
+          state.fieldValues[f.id] = nextVal;
+          recordFieldChange(f.id, focusStartVal, nextVal);
+          focusStartVal = nextVal;
+          inp.style.color = "transparent";
+          saveProgress(false);
+
+          if (submittingEnter) {
+            submittingEnter = false;
+            return;
+          }
+
+          scheduleEvaluate({ delayMs: 0, rerenderPage: true }, () =>
+            loadAndRenderAllPages({ force: true })
+          );
+        });
+
+        // Suporte a Enter e Escape nos campos de formulário
+        inp.addEventListener("keydown", async (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            clearTimeout(state.evalTimer);
+            state.evalTimer = null;
+            clearTimeout(state.autosaveTimer);
+            state.autosaveTimer = null;
+
+            const nextVal = normalizeFieldValueForCompare(f.type, inp.value);
+            state.fieldValues[f.id] = nextVal;
+            recordFieldChange(f.id, focusStartVal, nextVal);
+            focusStartVal = nextVal;
+            saveProgress(false);
+
+            submittingEnter = true;
+            inp.blur();
+
+            await evaluateWithEngine(
+              { rerenderPage: true, onlyDirty: false },
+              () => loadAndRenderAllPages({ force: true })
+            );
+            saveProgress(false);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            inp.blur();
+          }
+        });
+      } else {
+        inp.title = f.label || f.name;
+      }
+
+      positionWidgetElement(inp, f, left, top, width, height);
+      nextFragment.appendChild(inp);
     }
   }
+
+  for (const [fid, el] of existingById.entries()) {
+    if (!seenIds.has(fid) && fid !== activeFieldId) {
+      el.remove();
+    }
+  }
+
+  target.widgetsLayer.replaceChildren(nextFragment);
 }
 
 export function renderFreeTextsOverlay(pageNum = state.currentPage) {
@@ -220,5 +324,12 @@ export function redrawStrokesCanvas(pageNum = state.currentPage) {
       ctx.lineTo(stk.points[i].x * w, stk.points[i].y * h);
     }
     ctx.stroke();
+  }
+}
+
+export function renderAllOverlays() {
+  for (let p = 1; p <= state.totalPages; p++) {
+    renderFreeTextsOverlay(p);
+    redrawStrokesCanvas(p);
   }
 }

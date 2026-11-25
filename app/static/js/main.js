@@ -1,5 +1,11 @@
 import { initHomeWarpGrid, renderHomeWarpGrid } from "./warp-grid.js";
-import { state, els, indexFieldsMetadata, buildPayloadByFieldName } from "./state.js";
+import {
+  state,
+  els,
+  indexFieldsMetadata,
+  buildPayloadByFieldName,
+  normalizeFieldValueForCompare,
+} from "./state.js";
 import { closeServerSession, inspectPdfFile, exportFilledPdf } from "./api.js";
 import { showToast, saveProgress, scheduleAutosave, loadSavedProgress } from "./draft.js";
 import { evaluateWithEngine } from "./engine-sync.js";
@@ -10,6 +16,9 @@ import {
   redrawStrokesCanvas,
   revokeAllPageUrls,
 } from "./stage.js";
+
+let historyBusy = false;
+const pendingHistorySteps = [];
 
 function getPagesContainer() {
   return document.getElementById("pagesContainer") || els.pageStage;
@@ -29,15 +38,87 @@ function setHeaderMode(mode) {
   }
 }
 
-function pushHistory(action) {
-  state.history.push(action);
+function cloneStrokeSnapshot(stroke) {
+  if (!stroke) return null;
+  return {
+    ...stroke,
+    points: Array.isArray(stroke.points) ? stroke.points.map((pt) => ({ ...pt })) : [],
+  };
+}
+
+function cloneActionSnapshot(action) {
+  if (!action) return null;
+  return {
+    ...action,
+    item: action.item ? { ...action.item } : null,
+    stroke: action.stroke ? cloneStrokeSnapshot(action.stroke) : null,
+  };
+}
+
+function isSameAction(a, b) {
+  if (!a || !b || a.type !== b.type) return false;
+  if (a.type === "field") {
+    return a.fid === b.fid && a.prevVal === b.prevVal && a.nextVal === b.nextVal;
+  }
+  if (a.type === "text" || a.type === "stroke") {
+    return a.id && a.id === b.id;
+  }
+  return false;
+}
+
+export function pushHistory(action) {
+  if (!action) return;
+  if (!Array.isArray(state.history)) {
+    state.history = [];
+  }
+  const prevTop = state.history[state.history.length - 1];
+  if (isSameAction(prevTop, action)) {
+    updateUndoState();
+    return;
+  }
+  state.redoStack = [];
+  state.history.push(cloneActionSnapshot(action));
   updateUndoState();
 }
 
+export function recordFieldChange(fid, prevVal, nextVal) {
+  if (!fid || !Object.prototype.hasOwnProperty.call(state.fieldMeta || {}, fid)) return;
+  const meta = state.fieldMeta[fid];
+  const normPrev = normalizeFieldValueForCompare(meta?.type, prevVal);
+  const normNext = normalizeFieldValueForCompare(meta?.type, nextVal);
+  if (normPrev === normNext) return;
+
+  pushHistory({
+    type: "field",
+    fid,
+    prevVal: normPrev,
+    nextVal: normNext,
+    page: meta?.page,
+  });
+}
+
 function updateUndoState() {
-  const disabled = state.history.length === 0;
-  if (els.undoBtn) els.undoBtn.disabled = disabled;
-  if (els.mUndo) els.mUndo.disabled = disabled;
+  const undoDisabled = !Array.isArray(state.history) || state.history.length === 0;
+  const redoDisabled = !Array.isArray(state.redoStack) || state.redoStack.length === 0;
+  if (els.undoBtn) els.undoBtn.disabled = undoDisabled;
+  if (els.mUndo) els.mUndo.disabled = undoDisabled;
+  if (els.redoBtn) els.redoBtn.disabled = redoDisabled;
+  if (els.mRedo) els.mRedo.disabled = redoDisabled;
+}
+
+function syncFieldDomElement(fid, val) {
+  const root = getPagesContainer() || document;
+  const el = root.querySelector(`[data-field-id="${CSS.escape(String(fid))}"]`);
+  if (!el) return;
+
+  if (el.type === "checkbox") {
+    el.checked = Boolean(val);
+  } else {
+    const nextStr = String(val ?? "");
+    if (el.value !== nextStr) {
+      el.value = nextStr;
+    }
+  }
 }
 
 function buildPageStages() {
@@ -77,15 +158,16 @@ function buildPageStages() {
       if (!text || !text.trim()) return;
 
       const id = `txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      state.freeTexts.push({
+      const item = {
         id,
         page: pageNum,
         x: Math.max(0, Math.min(1, xNorm)),
         y: Math.max(0, Math.min(1, yNorm)),
         text: text.trim(),
         font_size: 11,
-      });
-      pushHistory({ type: "text", id });
+      };
+      state.freeTexts.push(item);
+      pushHistory({ type: "text", id, page: pageNum, item });
       renderAllPagesOverlays();
       scheduleAutosave();
     });
@@ -204,24 +286,172 @@ function syncToolPointersOnStages() {
   });
 }
 
-function undoLastAction() {
+async function applySingleUndo() {
+  if (!Array.isArray(state.history) || state.history.length === 0) {
+    updateUndoState();
+    return;
+  }
+
   const last = state.history.pop();
-  updateUndoState();
-  if (!last) return;
+  if (!last) {
+    updateUndoState();
+    return;
+  }
+
+  if (!Array.isArray(state.redoStack)) {
+    state.redoStack = [];
+  }
 
   if (last.type === "text") {
-    state.freeTexts = state.freeTexts.filter((t) => t.id !== last.id);
+    const existing = (state.freeTexts || []).find((t) => t.id === last.id);
+    const snapshotItem = last.item ? { ...last.item } : existing ? { ...existing } : null;
+    state.freeTexts = (state.freeTexts || []).filter((t) => t.id !== last.id);
+    state.redoStack.push(cloneActionSnapshot({ ...last, item: snapshotItem }));
+    updateUndoState();
     renderAllPagesOverlays();
     scheduleAutosave();
+    showToast("Texto desfeito");
   } else if (last.type === "stroke") {
-    state.strokes = state.strokes.filter((s) => s.id !== last.id);
+    if (state.currentStroke && state.currentStroke.id === last.id) {
+      state.currentStroke = null;
+      state.isDrawing = false;
+    }
+    const existing = (state.strokes || []).find((s) => s.id === last.id);
+    const snapshotStroke = last.stroke
+      ? cloneStrokeSnapshot(last.stroke)
+      : existing
+        ? cloneStrokeSnapshot(existing)
+        : null;
+    state.strokes = (state.strokes || []).filter((s) => s.id !== last.id);
+    state.redoStack.push(cloneActionSnapshot({ ...last, stroke: snapshotStroke }));
+    updateUndoState();
     renderAllPagesOverlays();
     scheduleAutosave();
+    showToast("Traço desfeito");
+  } else if (last.type === "field" && last.fid) {
+    clearTimeout(state.evalTimer);
+    state.evalTimer = null;
+
+    state.redoStack.push(cloneActionSnapshot(last));
+    updateUndoState();
+
+    const meta = state.fieldMeta?.[last.fid];
+    const revertedVal = normalizeFieldValueForCompare(meta?.type, last.prevVal);
+    state.fieldValues[last.fid] = revertedVal;
+    syncFieldDomElement(last.fid, revertedVal);
+    scheduleAutosave();
+    showToast("Campo desfeito");
+
+    await evaluateWithEngine(
+      { rerenderPage: true, onlyDirty: false },
+      () => renderAllPages({ force: true })
+    );
+  } else {
+    updateUndoState();
   }
+}
+
+async function applySingleRedo() {
+  if (!Array.isArray(state.redoStack) || state.redoStack.length === 0) {
+    updateUndoState();
+    return;
+  }
+
+  const next = state.redoStack.pop();
+  if (!next) {
+    updateUndoState();
+    return;
+  }
+
+  if (!Array.isArray(state.history)) {
+    state.history = [];
+  }
+
+  if (next.type === "text" && next.item) {
+    const restored = { ...next.item };
+    state.freeTexts = (state.freeTexts || []).filter((t) => t.id !== restored.id);
+    state.freeTexts.push(restored);
+    state.history.push(cloneActionSnapshot({ ...next, item: restored }));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Texto refeito");
+  } else if (next.type === "stroke" && next.stroke) {
+    const restored = cloneStrokeSnapshot(next.stroke);
+    state.strokes = (state.strokes || []).filter((s) => s.id !== restored.id);
+    state.strokes.push(restored);
+    state.history.push(cloneActionSnapshot({ ...next, stroke: restored }));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Traço refeito");
+  } else if (next.type === "field" && next.fid) {
+    clearTimeout(state.evalTimer);
+    state.evalTimer = null;
+
+    state.history.push(cloneActionSnapshot(next));
+    updateUndoState();
+
+    const meta = state.fieldMeta?.[next.fid];
+    const appliedVal = normalizeFieldValueForCompare(meta?.type, next.nextVal);
+    state.fieldValues[next.fid] = appliedVal;
+    syncFieldDomElement(next.fid, appliedVal);
+    scheduleAutosave();
+    showToast("Campo refeito");
+
+    await evaluateWithEngine(
+      { rerenderPage: true, onlyDirty: false },
+      () => renderAllPages({ force: true })
+    );
+  } else {
+    updateUndoState();
+  }
+}
+
+async function drainHistoryQueue() {
+  if (historyBusy) return;
+  historyBusy = true;
+  try {
+    while (pendingHistorySteps.length > 0) {
+      const step = pendingHistorySteps.shift();
+      if (step === "undo") {
+        await applySingleUndo();
+      } else if (step === "redo") {
+        await applySingleRedo();
+      }
+    }
+  } finally {
+    historyBusy = false;
+    updateUndoState();
+  }
+}
+
+function enqueueHistoryStep(step) {
+  if (!state.fileId) return;
+  if (step === "undo" && (!Array.isArray(state.history) || state.history.length === 0)) {
+    updateUndoState();
+    return;
+  }
+  if (step === "redo" && (!Array.isArray(state.redoStack) || state.redoStack.length === 0)) {
+    updateUndoState();
+    return;
+  }
+  pendingHistorySteps.push(step);
+  void drainHistoryQueue();
+}
+
+function undoLastAction() {
+  enqueueHistoryStep("undo");
+}
+
+function redoLastAction() {
+  enqueueHistoryStep("redo");
 }
 
 async function handleFileSelected(file) {
   if (!file) return;
+  pendingHistorySteps.length = 0;
+  historyBusy = false;
   clearTimeout(state.evalTimer);
   revokeAllPageUrls();
   if (state.fileId) {
@@ -245,6 +475,9 @@ async function handleFileSelected(file) {
     state.freeTexts = [];
     state.strokes = [];
     state.history = [];
+    state.redoStack = [];
+    state.isDrawing = false;
+    state.currentStroke = null;
     updateUndoState();
 
     indexFieldsMetadata();
@@ -368,7 +601,7 @@ function startDraw(e, pageNum, canvas) {
   state.isDrawing = true;
   state.currentStroke = { id, page: pageNum, points: [pt] };
   state.strokes.push(state.currentStroke);
-  pushHistory({ type: "stroke", id });
+  pushHistory({ type: "stroke", id, page: pageNum, stroke: state.currentStroke });
 }
 
 function moveDraw(e) {
@@ -382,10 +615,23 @@ function moveDraw(e) {
 
 function endDraw() {
   if (state.isDrawing) {
+    const finishedStroke = state.currentStroke ? cloneStrokeSnapshot(state.currentStroke) : null;
+    if (finishedStroke && Array.isArray(state.history)) {
+      const last = state.history[state.history.length - 1];
+      if (last && last.type === "stroke" && last.id === finishedStroke.id) {
+        last.stroke = finishedStroke;
+      }
+    }
     state.isDrawing = false;
     state.currentStroke = null;
     scheduleAutosave();
   }
+}
+
+function isEditableTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
 }
 
 els.saveBtn.addEventListener("click", async () => {
@@ -396,11 +642,18 @@ els.saveBtn.addEventListener("click", async () => {
 });
 
 els.backBtn.addEventListener("click", () => {
+  pendingHistorySteps.length = 0;
+  historyBusy = false;
   clearTimeout(state.evalTimer);
   saveProgress(false);
   revokeAllPageUrls();
   closeServerSession(state.fileId);
   state.fileId = null;
+  state.history = [];
+  state.redoStack = [];
+  state.isDrawing = false;
+  state.currentStroke = null;
+  updateUndoState();
   setHeaderMode("home");
   els.backBtn.classList.add("hidden");
   els.toolbarCenter.classList.add("hidden");
@@ -431,11 +684,13 @@ els.toolCursorBtn.addEventListener("click", () => setTool("fields"));
 els.toolTextBtn.addEventListener("click", () => setTool("text"));
 els.toolDrawBtn.addEventListener("click", () => setTool("draw"));
 els.undoBtn.addEventListener("click", undoLastAction);
+els.redoBtn?.addEventListener("click", redoLastAction);
 
 els.mToolFields.addEventListener("click", () => setTool("fields"));
 els.mToolText.addEventListener("click", () => setTool("text"));
 els.mToolDraw.addEventListener("click", () => setTool("draw"));
 els.mUndo.addEventListener("click", undoLastAction);
+els.mRedo?.addEventListener("click", redoLastAction);
 
 els.zoomInBtn.addEventListener("click", () => setZoom(state.zoom + 0.15));
 els.zoomOutBtn.addEventListener("click", () => setZoom(state.zoom - 0.15));
@@ -450,6 +705,50 @@ window.addEventListener("beforeunload", () => {
   revokeAllPageUrls();
   if (state.fileId) {
     closeServerSession(state.fileId);
+  }
+});
+
+// Gestão de Atalhos Globais de Teclado
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (state.fileId) {
+      els.saveBtn.click();
+    }
+    return;
+  }
+
+  const key = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === "z") {
+    if (isEditableTarget(document.activeElement)) {
+      return;
+    }
+    e.preventDefault();
+    undoLastAction();
+    return;
+  }
+
+  if (
+    ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === "y") ||
+    ((e.ctrlKey || e.metaKey) && e.shiftKey && key === "z")
+  ) {
+    if (isEditableTarget(document.activeElement)) {
+      return;
+    }
+    e.preventDefault();
+    redoLastAction();
+    return;
+  }
+
+  if (e.key === "Escape") {
+    if (state.tool !== "fields") {
+      setTool("fields");
+    } else {
+      const active = document.activeElement;
+      if (active && active.tagName === "INPUT") {
+        active.blur();
+      }
+    }
   }
 });
 

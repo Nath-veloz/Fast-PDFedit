@@ -14,15 +14,18 @@ export const state = {
   lastEngineByName: {}, // field.name -> último valor conhecido pelo motor
   freeTexts: [], // { id, page, x, y, text, font_size }
   strokes: [], // { id, page, points: [{ x, y }] }
-  history: [], // { type: "text" | "stroke", id }
+  history: [], // { type: "text" | "stroke" | "field", ... }
+  redoStack: [], // ações desfeitas para refazer
   isDrawing: false,
   currentStroke: null,
   autosaveTimer: null,
+  evalTimer: null,
   evalInFlight: false,
   evalPending: false,
   evalRerenderPending: false,
   evalForceFullPending: false,
   pageUrls: {}, // pageNum -> objectUrl
+  pageRenderMeta: {}, // pageNum -> { fileId, dpi }
 };
 
 export const els = {
@@ -49,6 +52,7 @@ export const els = {
   toolTextBtn: document.getElementById("toolTextBtn"),
   toolDrawBtn: document.getElementById("toolDrawBtn"),
   undoBtn: document.getElementById("undoBtn"),
+  redoBtn: document.getElementById("redoBtn"),
   mZoomIn: document.getElementById("mZoomIn"),
   mZoomOut: document.getElementById("mZoomOut"),
   mZoomLabel: document.getElementById("mZoomLabel"),
@@ -57,6 +61,7 @@ export const els = {
   mToolText: document.getElementById("mToolText"),
   mToolDraw: document.getElementById("mToolDraw"),
   mUndo: document.getElementById("mUndo"),
+  mRedo: document.getElementById("mRedo"),
 };
 
 export function normalizeFieldValueForCompare(type, val) {
