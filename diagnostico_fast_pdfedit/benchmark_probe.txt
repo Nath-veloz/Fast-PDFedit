@@ -1,0 +1,10 @@
+﻿
+step             elapsed_ms exit_code output_preview                                                                   
+----             ---------- --------- --------------                                                                   
+inspect              1129,9         0 {...                                                                             
+render_150dpi_p1      291,2         0                                                                                  
+eval_with_out         328,7         1 pdfcraft_probe.exe : {"error":"JSON de campos inv├ílido: expected value at lin...
+export                199,9         1 pdfcraft_probe.exe : {"error":"JSON de campos inv├ílido: expected value at lin...
+
+
+

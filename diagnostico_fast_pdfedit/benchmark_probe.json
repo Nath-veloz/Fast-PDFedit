@@ -1,0 +1,26 @@
+﻿[
+    {
+        "step":  "inspect",
+        "elapsed_ms":  1129.9,
+        "exit_code":  0,
+        "output_preview":  "{\r\n  \"editable\": true,\r\n  \"field_count\": 427,\r\n  \"fields\": [\r\n    {\r\n      \"kind\": \"Text\",\r\n      \"name\": \"NOME DO PERSONAGEM\",\r\n      \"page\": 1,\r\n      \"rect\": [\r\n        0.04398539404617796,\r\n        0.04573025528847295,\r\n        0.33928639632803004,\r\n        0.061278124979691574\r\n      ],\r\n      "
+    },
+    {
+        "step":  "render_150dpi_p1",
+        "elapsed_ms":  291.2,
+        "exit_code":  0,
+        "output_preview":  ""
+    },
+    {
+        "step":  "eval_with_out",
+        "elapsed_ms":  328.7,
+        "exit_code":  1,
+        "output_preview":  "pdfcraft_probe.exe : {\"error\":\"JSON de campos inv├ílido: expected value at line 1 column 1\",\"ok\":false}\r\nNo C:\\Users\\natha\\OneDrive\\Área de Trabalho\\Fast-PDFedit\\diagnostico_fast_pdfedit\\rodar_bench.ps1:16 caractere:13\r\n+   $output = \u0026 $ProbePath @cmdArgs 2\u003e\u00261 | Out-String\r\n+             ~~~~~~~~~~~"
+    },
+    {
+        "step":  "export",
+        "elapsed_ms":  199.9,
+        "exit_code":  1,
+        "output_preview":  "pdfcraft_probe.exe : {\"error\":\"JSON de campos inv├ílido: expected value at line 1 column 1\",\"ok\":false}\r\nNo C:\\Users\\natha\\OneDrive\\Área de Trabalho\\Fast-PDFedit\\diagnostico_fast_pdfedit\\rodar_bench.ps1:16 caractere:13\r\n+   $output = \u0026 $ProbePath @cmdArgs 2\u003e\u00261 | Out-String\r\n+             ~~~~~~~~~~~"
+    }
+]
