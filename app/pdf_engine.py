@@ -11,7 +11,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 PROBE_EXE = Path(
-    os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\cargo_target\pdfcraft_core\debug\pdfcraft_probe.exe")
+    os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\dev\Fast-PDFedit\pdfcraft_core\target\debug\pdfcraft_probe.exe")
 )
 PROBE_TIMEOUT_SECONDS = 30
 TEMP_PDF_TTL_SECONDS = 3600
