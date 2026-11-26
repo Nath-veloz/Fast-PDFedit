@@ -1,0 +1,17 @@
+services:
+  fast-pdfedit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fast-pdfedit
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      PDFCRAFT_PROBE_EXE: /app/bin/pdfcraft_probe
+      PDFCRAFT_PROBE_TIMEOUT: "25"
+      MAX_FILE_SIZE_MB: "10"
+      MAX_STORED_FILES: "8"
+      MAX_CACHED_PNGS: "40"
+      MAX_CONCURRENT_PROBE_CALLS: "1"
+      SESSION_TTL_SECONDS: "1800"
