@@ -1,5 +1,5 @@
 # --- Estágio 1: Compila o binário Rust pdfcraft_probe ---
-FROM rust:1.83-slim-bookworm AS rust-builder
+FROM rust:slim-bookworm AS rust-builder
 
 WORKDIR /build
 
