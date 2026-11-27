@@ -5,18 +5,38 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 from typing import Any, Dict, List, Optional
 
-PROBE_EXE = Path(
-    os.environ.get("PDFCRAFT_PROBE_EXE", r"C:\dev\Fast-PDFedit\pdfcraft_core\target\debug\pdfcraft_probe.exe")
-)
-PROBE_TIMEOUT_SECONDS = 30
-TEMP_PDF_TTL_SECONDS = 3600
-MAX_TEMP_PDFS = 64
+import fitz  # PyMuPDF
 
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
+def _default_probe_path() -> Path:
+    repo_root = Path(__file__).resolve().parent.parent
+    exe_name = "pdfcraft_probe.exe" if sys.platform.startswith("win") else "pdfcraft_probe"
+    release_bin = repo_root / "pdfcraft_core" / "target" / "release" / exe_name
+    if release_bin.exists():
+        return release_bin
+    return repo_root / "pdfcraft_core" / "target" / "debug" / exe_name
+
+
+PROBE_EXE = Path(os.environ.get("PDFCRAFT_PROBE_EXE") or _default_probe_path())
+PROBE_TIMEOUT_SECONDS = _env_int("PDFCRAFT_PROBE_TIMEOUT", 30)
+TEMP_PDF_TTL_SECONDS = _env_int("SESSION_TTL_SECONDS", 3600)
+MAX_TEMP_PDFS = _env_int("MAX_TEMP_PDFS", 32)
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="fast_pdfedit_"))
 _TMP_LOCK = threading.Lock()
 # sha256_hex -> {"path": Path, "last_used": float}
@@ -407,6 +427,96 @@ def render_page_png(pdf_bytes: bytes, page_number: int, dpi: int = 150) -> bytes
     return _run_probe_render(pdf_bytes, page_number=page_number, dpi=dpi)
 
 
+def _clamp01(value: Any) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _apply_overlays_and_flatten(
+    pdf_bytes: bytes,
+    free_texts: Optional[List[Dict[str, Any]]] = None,
+    strokes: Optional[List[Dict[str, Any]]] = None,
+    flatten: bool = True,
+) -> bytes:
+    texts = free_texts or []
+    paths = strokes or []
+    if not texts and not paths and not flatten:
+        return pdf_bytes
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for item in texts:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            page_idx = int(item.get("page") or 1) - 1
+            if page_idx < 0 or page_idx >= len(doc):
+                continue
+            page = doc[page_idx]
+            rect = page.rect
+            x = rect.x0 + _clamp01(item.get("x")) * rect.width
+            y = rect.y0 + _clamp01(item.get("y")) * rect.height
+            font_size = max(6.0, min(72.0, float(item.get("font_size") or 11.0)))
+            page.insert_text(
+                fitz.Point(x, y + font_size),
+                text,
+                fontsize=font_size,
+                fontname="helv",
+                color=(0.08, 0.09, 0.12),
+                overlay=True,
+            )
+
+        for stroke in paths:
+            if not isinstance(stroke, dict):
+                continue
+            pts_raw = stroke.get("points") if isinstance(stroke.get("points"), list) else []
+            if len(pts_raw) < 2:
+                continue
+            page_idx = int(stroke.get("page") or 1) - 1
+            if page_idx < 0 or page_idx >= len(doc):
+                continue
+            page = doc[page_idx]
+            rect = page.rect
+            points = [
+                fitz.Point(
+                    rect.x0 + _clamp01(p.get("x")) * rect.width,
+                    rect.y0 + _clamp01(p.get("y")) * rect.height,
+                )
+                for p in pts_raw
+                if isinstance(p, dict)
+            ]
+            if len(points) >= 2:
+                shape = page.new_shape()
+                shape.draw_polyline(points)
+                shape.finish(
+                    color=(0.08, 0.09, 0.12),
+                    width=1.6,
+                    lineCap=1,
+                    lineJoin=1,
+                )
+                shape.commit(overlay=True)
+
+        if flatten:
+            # Converte widgets/anotações em aparência visual estática no PDF final
+            for page in doc:
+                for widget in list(page.widgets() or []):
+                    widget.update()
+                annot = page.first_annot
+                while annot:
+                    next_annot = annot.next
+                    annot.update()
+                    annot = next_annot
+            doc.bake()
+
+        return doc.tobytes(garbage=3, deflate=True)
+    finally:
+        doc.close()
+
+
 def build_filled_pdf(
     pdf_bytes: bytes,
     field_values: Dict[str, Any],
@@ -414,6 +524,11 @@ def build_filled_pdf(
     strokes: Optional[List[Dict[str, Any]]] = None,
     flatten: bool = True,
 ) -> bytes:
-    """Aplica valores de campos e recálculos via motor Rust pdfcraft_probe."""
-    _ = (free_texts, strokes, flatten)
-    return _run_probe_export(pdf_bytes, field_values=field_values)
+    """Aplica campos via motor Rust e adiciona textos livres, traços e flatten via PyMuPDF."""
+    exported_bytes = _run_probe_export(pdf_bytes, field_values=field_values)
+    return _apply_overlays_and_flatten(
+        exported_bytes,
+        free_texts=free_texts,
+        strokes=strokes,
+        flatten=flatten,
+    )

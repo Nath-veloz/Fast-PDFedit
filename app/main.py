@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 import re
 from threading import Lock
@@ -25,6 +26,17 @@ STATIC_DIR = BASE_DIR / "static"
 app = FastAPI(title="Fast-PDFedit API")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
 # Cache temporário em memória:
 # file_id -> {"bytes": bytes, "filename": str, "created_at": float, "version": int}
 PDF_STORE: Dict[str, Dict[str, Any]] = {}
@@ -32,11 +44,12 @@ PDF_STORE: Dict[str, Dict[str, Any]] = {}
 PNG_CACHE: Dict[Tuple[str, int, int, int], bytes] = {}
 
 STORE_LOCK = Lock()
-MAX_STORED_FILES = 50
-MAX_CACHED_PNGS = 240
-TTL_SECONDS = 3600  # 1 hora
-MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
-MAX_CONCURRENT_PROBE_CALLS = 4
+MAX_STORED_FILES = _env_int("MAX_STORED_FILES", 50)
+MAX_CACHED_PNGS = _env_int("MAX_CACHED_PNGS", 240)
+TTL_SECONDS = _env_int("SESSION_TTL_SECONDS", 3600)
+MAX_FILE_SIZE_MB = _env_int("MAX_FILE_SIZE_MB", 25)
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+MAX_CONCURRENT_PROBE_CALLS = _env_int("MAX_CONCURRENT_PROBE_CALLS", 4)
 PROBE_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_PROBE_CALLS)
 
 
@@ -99,10 +112,11 @@ def _get_entry_or_404(file_id: str) -> Dict[str, Any]:
     now = time.time()
     with STORE_LOCK:
         _cleanup_store_locked(now)
-        entry = PDF_STORE.get(file_id)
+        entry = PDF_STORE.pop(file_id, None)
         if not entry:
             raise HTTPException(status_code=404, detail="Arquivo não encontrado ou sessão expirada.")
         entry["created_at"] = now
+        PDF_STORE[file_id] = entry
         return dict(entry)
 
 
@@ -132,7 +146,10 @@ async def api_inspect(file: UploadFile = File(...)) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="O arquivo PDF está vazio.")
 
     if len(pdf_bytes) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="O arquivo PDF excede o limite de 25 MB.")
+        raise HTTPException(
+            status_code=413,
+            detail=f"O arquivo PDF excede o limite de {MAX_FILE_SIZE_MB} MB.",
+        )
 
     try:
         info = await _run_engine_bounded(inspect_pdf, pdf_bytes)
