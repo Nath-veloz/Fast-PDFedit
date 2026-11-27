@@ -15,6 +15,8 @@ import {
   renderFreeTextsOverlay,
   redrawStrokesCanvas,
   revokeAllPageUrls,
+  hitTestStroke,
+  getStrokeDeleteBadgeHit,
 } from "./stage.js";
 
 let historyBusy = false;
@@ -56,11 +58,11 @@ function cloneActionSnapshot(action) {
 }
 
 function isSameAction(a, b) {
-  if (!a || !b || a.type !== b.type) return false;
+  if (!a || !b || a.type !== b.type || (a.subType || null) !== (b.subType || null)) return false;
   if (a.type === "field") {
     return a.fid === b.fid && a.prevVal === b.prevVal && a.nextVal === b.nextVal;
   }
-  if (a.type === "text" || a.type === "stroke") {
+  if ((a.type === "text" || a.type === "stroke") && !a.subType) {
     return a.id && a.id === b.id;
   }
   return false;
@@ -280,11 +282,19 @@ function syncToolPointersOnStages() {
   container.querySelectorAll("[data-page-num]").forEach((stage) => {
     const widgetsLayer = stage.querySelector("div");
     const drawCanvas = stage.querySelector("canvas");
-    if (widgetsLayer) widgetsLayer.style.pointerEvents = isFields ? "auto" : "none";
-    if (drawCanvas) drawCanvas.style.pointerEvents = isDraw ? "auto" : "none";
+    if (widgetsLayer) {
+      const hasSelectedStroke = state.selectedOverlay?.kind === "stroke";
+      widgetsLayer.style.pointerEvents = isFields && !hasSelectedStroke ? "auto" : "none";
+    }
+    if (drawCanvas) {
+      drawCanvas.style.pointerEvents = isDraw || isFields ? "auto" : "none";
+      drawCanvas.style.touchAction = isDraw ? "none" : "auto";
+    }
     stage.style.cursor = isText ? "text" : isDraw ? "crosshair" : "default";
   });
 }
+
+
 
 async function applySingleUndo() {
   if (!Array.isArray(state.history) || state.history.length === 0) {
@@ -300,6 +310,56 @@ async function applySingleUndo() {
 
   if (!Array.isArray(state.redoStack)) {
     state.redoStack = [];
+  }
+
+  if (last.type === "text" && last.subType === "move") {
+    const targetText = (state.freeTexts || []).find((t) => t.id === last.id);
+    if (targetText && last.prevPos) {
+      targetText.x = last.prevPos.x;
+      targetText.y = last.prevPos.y;
+    }
+    state.redoStack.push(cloneActionSnapshot(last));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Movimento do texto desfeito");
+    return;
+  }
+
+  if (last.type === "text" && last.subType === "delete" && last.item) {
+    state.freeTexts = (state.freeTexts || []).filter((t) => t.id !== last.item.id);
+    state.freeTexts.push({ ...last.item });
+    state.redoStack.push(cloneActionSnapshot(last));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Exclusão do texto desfeita");
+    return;
+  }
+
+  if (last.type === "stroke" && last.subType === "move") {
+    const targetStroke = (state.strokes || []).find((s) => s.id === last.id);
+    if (targetStroke && Array.isArray(last.prevPoints)) {
+      targetStroke.points = last.prevPoints.map((p) => ({ ...p }));
+    }
+    state.redoStack.push(cloneActionSnapshot(last));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Movimento do desenho desfeito");
+    return;
+  }
+
+  if (last.type === "stroke" && last.subType === "delete" && last.stroke) {
+    const restored = cloneStrokeSnapshot(last.stroke);
+    state.strokes = (state.strokes || []).filter((s) => s.id !== restored.id);
+    state.strokes.push(restored);
+    state.redoStack.push(cloneActionSnapshot(last));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Exclusão do desenho desfeita");
+    return;
   }
 
   if (last.type === "text") {
@@ -365,6 +425,59 @@ async function applySingleRedo() {
 
   if (!Array.isArray(state.history)) {
     state.history = [];
+  }
+
+  if (next.type === "text" && next.subType === "move") {
+    const targetText = (state.freeTexts || []).find((t) => t.id === next.id);
+    if (targetText && next.nextPos) {
+      targetText.x = next.nextPos.x;
+      targetText.y = next.nextPos.y;
+    }
+    state.history.push(cloneActionSnapshot(next));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Movimento do texto refeito");
+    return;
+  }
+
+  if (next.type === "text" && next.subType === "delete" && next.item) {
+    state.freeTexts = (state.freeTexts || []).filter((t) => t.id !== next.item.id);
+    if (state.selectedOverlay?.kind === "text" && state.selectedOverlay?.id === next.item.id) {
+      state.selectedOverlay = null;
+    }
+    state.history.push(cloneActionSnapshot(next));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Exclusão do texto refeita");
+    return;
+  }
+
+  if (next.type === "stroke" && next.subType === "move") {
+    const targetStroke = (state.strokes || []).find((s) => s.id === next.id);
+    if (targetStroke && Array.isArray(next.nextPoints)) {
+      targetStroke.points = next.nextPoints.map((p) => ({ ...p }));
+    }
+    state.history.push(cloneActionSnapshot(next));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Movimento do desenho refeito");
+    return;
+  }
+
+  if (next.type === "stroke" && next.subType === "delete" && next.stroke) {
+    state.strokes = (state.strokes || []).filter((s) => s.id !== next.stroke.id);
+    if (state.selectedOverlay?.kind === "stroke" && state.selectedOverlay?.id === next.stroke.id) {
+      state.selectedOverlay = null;
+    }
+    state.history.push(cloneActionSnapshot(next));
+    updateUndoState();
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Exclusão do desenho refeita");
+    return;
   }
 
   if (next.type === "text" && next.item) {
@@ -592,9 +705,95 @@ function getNormCoords(e, canvas) {
   };
 }
 
+let draggingOverlay = null;
+
+function getOverlayClientPoint(e) {
+  if (e.touches && e.touches.length > 0) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  if (e.changedTouches && e.changedTouches.length > 0) {
+    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
+}
+
+function getStrokeDeleteBadgeCenter(stroke, w, h) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  for (const p of stroke.points || []) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+  }
+  if (!Number.isFinite(minX)) return null;
+  const pad = 0.012;
+  const bx = Math.max(0, minX - pad) * w;
+  const by = Math.max(0, minY - pad) * h;
+  const bw = Math.max(12, (Math.min(1, maxX + pad) - Math.max(0, minX - pad)) * w);
+  const badgeR = 9;
+  return {
+    cx: Math.min(w - badgeR - 2, bx + bw),
+    cy: Math.max(badgeR + 2, by),
+    r: badgeR + 5, // margem amigável ao toque no celular
+  };
+}
+
 function startDraw(e, pageNum, canvas) {
-  if (!state.fileId || state.tool !== "draw") return;
+  if (!state.fileId) return;
+
+  if (state.tool !== "draw") {
+    const pt = getNormCoords(e, canvas);
+    const px = pt.x * canvas.width;
+    const py = pt.y * canvas.height;
+
+    if (state.selectedOverlay?.kind === "stroke") {
+      const selectedStk = (state.strokes || []).find(
+        (s) => s.id === state.selectedOverlay.id && s.page === pageNum
+      );
+      if (selectedStk) {
+        const badge = getStrokeDeleteBadgeHit(selectedStk, canvas.width, canvas.height);
+        if (badge && Math.hypot(px - badge.cx, py - badge.cy) <= badge.hitR) {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteOverlayById("stroke", selectedStk.id, true);
+          return;
+        }
+      }
+    }
+
+    const hit = hitTestStroke(pageNum, pt.x, pt.y, canvas.width, canvas.height, 12);
+    if (hit) {
+      e.preventDefault();
+      e.stopPropagation();
+      state.selectedOverlay = { kind: "stroke", id: hit.id };
+      renderAllPagesOverlays();
+
+      const clientPt = getOverlayClientPoint(e);
+      const rect = canvas.getBoundingClientRect();
+      draggingOverlay = {
+        kind: "stroke",
+        id: hit.id,
+        page: pageNum,
+        startClientX: clientPt.x,
+        startClientY: clientPt.y,
+        width: Math.max(rect.width, 1),
+        height: Math.max(rect.height, 1),
+        origPoints: hit.points.map((p) => ({ x: p.x, y: p.y })),
+        moved: false,
+      };
+      return;
+    }
+
+    if (state.selectedOverlay) {
+      state.selectedOverlay = null;
+      renderAllPagesOverlays();
+    }
+    return;
+  }
+
   e.preventDefault();
+  state.selectedOverlay = null;
   const pt = getNormCoords(e, canvas);
   const id = `stk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
   state.currentPage = pageNum;
@@ -605,6 +804,24 @@ function startDraw(e, pageNum, canvas) {
 }
 
 function moveDraw(e) {
+  if (draggingOverlay && draggingOverlay.kind === "stroke") {
+    const stk = (state.strokes || []).find((s) => s.id === draggingOverlay.id);
+    if (!stk) return;
+    const curPt = getOverlayClientPoint(e);
+    const dxNorm = (curPt.x - draggingOverlay.startClientX) / draggingOverlay.width;
+    const dyNorm = (curPt.y - draggingOverlay.startClientY) / draggingOverlay.height;
+    if (Math.abs(dxNorm) > 0.002 || Math.abs(dyNorm) > 0.002) {
+      draggingOverlay.moved = true;
+      if (e.cancelable) e.preventDefault();
+    }
+    stk.points = draggingOverlay.origPoints.map((p) => ({
+      x: Math.max(0, Math.min(1, p.x + dxNorm)),
+      y: Math.max(0, Math.min(1, p.y + dyNorm)),
+    }));
+    withPageContext(draggingOverlay.page, () => redrawStrokesCanvas(draggingOverlay.page));
+    return;
+  }
+
   if (!state.isDrawing || !state.currentStroke) return;
   const pageEls = getStageEls(state.currentStroke.page);
   if (!pageEls?.drawCanvas) return;
@@ -614,6 +831,25 @@ function moveDraw(e) {
 }
 
 function endDraw() {
+  if (draggingOverlay && draggingOverlay.kind === "stroke") {
+    const stk = (state.strokes || []).find((s) => s.id === draggingOverlay.id);
+    if (draggingOverlay.moved && stk) {
+      window.dispatchEvent(
+        new CustomEvent("fastpdf:move-overlay", {
+          detail: {
+            kind: "stroke",
+            id: stk.id,
+            page: draggingOverlay.page,
+            prevPoints: draggingOverlay.origPoints.map((p) => ({ ...p })),
+            nextPoints: stk.points.map((p) => ({ ...p })),
+          },
+        })
+      );
+      scheduleAutosave();
+    }
+    draggingOverlay = null;
+  }
+
   if (state.isDrawing) {
     const finishedStroke = state.currentStroke ? cloneStrokeSnapshot(state.currentStroke) : null;
     if (finishedStroke && Array.isArray(state.history)) {
@@ -633,6 +869,83 @@ function isEditableTarget(el) {
   const tag = el.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable;
 }
+
+function deleteOverlayById(kind, id, recordUndo = true) {
+  if (!kind || !id) return;
+  if (kind === "text") {
+    const idx = (state.freeTexts || []).findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const [removed] = state.freeTexts.splice(idx, 1);
+    if (state.selectedOverlay?.kind === "text" && state.selectedOverlay?.id === id) {
+      state.selectedOverlay = null;
+    }
+    if (recordUndo) {
+      pushHistory({ type: "text", subType: "delete", id, page: removed.page, item: { ...removed } });
+    }
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Texto apagado");
+  } else if (kind === "stroke") {
+    const idx = (state.strokes || []).findIndex((s) => s.id === id);
+    if (idx === -1) return;
+    const [removed] = state.strokes.splice(idx, 1);
+    if (state.selectedOverlay?.kind === "stroke" && state.selectedOverlay?.id === id) {
+      state.selectedOverlay = null;
+    }
+    if (recordUndo) {
+      pushHistory({
+        type: "stroke",
+        subType: "delete",
+        id,
+        page: removed.page,
+        stroke: cloneStrokeSnapshot(removed),
+      });
+    }
+    renderAllPagesOverlays();
+    scheduleAutosave();
+    showToast("Desenho apagado");
+  }
+}
+
+window.addEventListener("fastpdf:delete-overlay", (e) => {
+  const { kind, id } = e.detail || {};
+  deleteOverlayById(kind, id, true);
+});
+
+window.addEventListener("fastpdf:move-overlay", (e) => {
+  const { kind, id, page, prevPos, nextPos, prevPoints, nextPoints } = e.detail || {};
+  if (kind === "text") {
+    pushHistory({
+      type: "text",
+      subType: "move",
+      id,
+      page,
+      prevPos,
+      nextPos,
+    });
+  } else if (kind === "stroke") {
+    pushHistory({
+      type: "stroke",
+      subType: "move",
+      id,
+      page,
+      prevPoints,
+      nextPoints,
+    });
+  }
+});
+
+window.addEventListener("keydown", (e) => {
+  if (
+    state.fileId &&
+    state.selectedOverlay &&
+    (e.key === "Delete" || e.key === "Backspace") &&
+    !isEditableTarget(document.activeElement)
+  ) {
+    e.preventDefault();
+    deleteOverlayById(state.selectedOverlay.kind, state.selectedOverlay.id, true);
+  }
+});
 
 els.saveBtn.addEventListener("click", async () => {
   if (!state.fileId) return;

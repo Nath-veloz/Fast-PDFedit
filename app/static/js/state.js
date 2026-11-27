@@ -14,6 +14,7 @@ export const state = {
   lastEngineByName: {}, // field.name -> último valor conhecido pelo motor
   freeTexts: [], // { id, page, x, y, text, font_size }
   strokes: [], // { id, page, points: [{ x, y }] }
+  selectedOverlay: null, // { kind: "text" | "stroke", id: string } | null
   history: [], // { type: "text" | "stroke" | "field", ... }
   redoStack: [], // ações desfeitas para refazer
   isDrawing: false,

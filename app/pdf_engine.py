@@ -11,7 +11,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
+try:
+    import pymupdf  # PyMuPDF >= 1.24.3
+except ImportError:
+    import fitz as pymupdf  # Fallback para versões antigas do PyMuPDF
 
 
 def _env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -445,7 +448,7 @@ def _apply_overlays_and_flatten(
     if not texts and not paths and not flatten:
         return pdf_bytes
 
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
         for item in texts:
             if not isinstance(item, dict):
@@ -462,7 +465,7 @@ def _apply_overlays_and_flatten(
             y = rect.y0 + _clamp01(item.get("y")) * rect.height
             font_size = max(6.0, min(72.0, float(item.get("font_size") or 11.0)))
             page.insert_text(
-                fitz.Point(x, y + font_size),
+                pymupdf.Point(x, y + font_size),
                 text,
                 fontsize=font_size,
                 fontname="helv",
@@ -482,7 +485,7 @@ def _apply_overlays_and_flatten(
             page = doc[page_idx]
             rect = page.rect
             points = [
-                fitz.Point(
+                pymupdf.Point(
                     rect.x0 + _clamp01(p.get("x")) * rect.width,
                     rect.y0 + _clamp01(p.get("y")) * rect.height,
                 )
