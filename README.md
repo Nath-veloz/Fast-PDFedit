@@ -1,10 +1,16 @@
 # Fast PDFedit v0.1
 
-Editor web open source para PDFs editáveis com backend em **FastAPI** (Python), processamento complementar de camadas e achatamento com **PyMuPDF (`fitz`)**, interface interativa em **HTML/CSS/JavaScript (Canvas)** e motor de inspeção, renderização e edição de formulários em **Rust** (`pdfcraft_probe`).
+Editor web open source para PDFs editáveis com backend em **FastAPI** (Python), processamento complementar de camadas e achatamento com **PyMuPDF (`pymupdf` / `fitz`)**, interface interativa em **HTML/CSS/JavaScript (Canvas)** e motor de inspeção, renderização e edição de formulários em **Rust** (`pdfcraft_probe`).
+
+## Acesso Online
+
+Caso queira apenas utilizar o editor diretamente pelo navegador, sem baixar o repositório ou configurar um servidor próprio, acesse a instância pública:
+
+* **Aplicação Web:** <https://fast-pdfedit.duckdns.org>
 
 ## Reconhecimentos: ArtCraft e PdfCraft
 
-Este projeto é construído sobre a engenharia open source do **[PdfCraft](https://github.com/storytold/pdfcraft.git)**, desenvolvido pela equipe do **[ArtCraft](https://getartcraft.com/)**, que fornece o núcleo em Rust (`pdfcraft_core`) responsável pela leitura estrutural de documentos PDF, renderização de páginas e avaliação de formulários interativos.
+Este projeto é construído sobre a engenharia open source do [**PdfCraft**](https://github.com/storytold/pdfcraft.git), desenvolvido pela equipe do [**ArtCraft**](https://getartcraft.com/), que fornece o núcleo em Rust (`pdfcraft_core`) responsável pela leitura estrutural de documentos PDF, renderização de páginas e avaliação de formulários interativos.
 
 * **Site oficial do ArtCraft:** <https://getartcraft.com/>
 * **Repositório oficial do PdfCraft:** <https://github.com/storytold/pdfcraft.git>
@@ -27,7 +33,7 @@ O binário `pdfcraft_probe` expõe o motor Rust via linha de comando (CLI) para 
 * **Avaliação (`eval [--fields-json <campos.json>] [--out <saida.pdf>] <pdf>`)**: aplica opcionalmente valores de campos via `Edit::SetFieldValue` a partir de um JSON (ignorando campos que já possuem o mesmo valor), grava opcionalmente o PDF resultante em `--out` e imprime em JSON os valores finais de todos os campos (`fields`) e o total aplicado (`applied_fields`).
 * **Exportação (`export [--fields-json <campos.json>] --out <saida.pdf> <pdf>`)**: aplica os valores de campos na sessão e grava o PDF resultante em `--out`, que o backend Python complementa aplicando textos livres, traços e achatamento (`flatten`).
 
-## Como rodar em um servidor (Docker + GHCR + Caddy)
+## Como rodar em um servidor próprio (Docker + GHCR + Caddy)
 
 As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub Actions (multi-stage build) e publicadas de forma pública no **GitHub Container Registry (GHCR)** (`ghcr.io/nath-veloz/fast-pdfedit:latest`). Isso permite implantar o serviço em servidores enxutos (como instâncias de 1 GB de RAM) sem precisar compilar Rust na máquina de produção.
 
@@ -35,7 +41,7 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
 
 * **Docker** e **Docker Compose** (`docker compose`) instalados.
 * **Caddy** (ou Nginx) instalado no host para atuar como proxy reverso com certificado HTTPS/TLS automático apontando para `127.0.0.1:8000`.
-* Um domínio ou subdomínio (por exemplo, via Duck DNS) com registro `A` apontando para o IP público do servidor.
+* Um domínio ou subdomínio (por exemplo, `seudominio.com`) com registro `A` apontando para o IP público do servidor, com as portas TCP `80` e `443` liberadas no firewall.
 * *(Recomendado em instâncias de 1 GB de RAM)* Configurar entre 1 GB e 2 GB de memória *swap* no sistema operacional para absorver picos momentâneos de processamento.
 
 ### Passo a passo no servidor
@@ -58,10 +64,10 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
 
 3. **Configure o proxy reverso com HTTPS (Caddy):**
 
-   Use o modelo disponível em `deploy/Caddyfile.example` como base para o `/etc/caddy/Caddyfile` do servidor, substituindo `seu-subdominio.duckdns.org` pelo seu endereço real:
+   Use o modelo disponível em `deploy/Caddyfile.example` como base para o `/etc/caddy/Caddyfile` do servidor, substituindo o domínio pelo seu endereço real (`seudominio.com`):
 
    ```caddyfile
-   seu-subdominio.duckdns.org {
+   seudominio.com {
        request_body {
            max_size 12MB
        }
@@ -73,15 +79,21 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
    Em seguida, valide e recarregue o serviço do Caddy:
 
    ```bash
+   sudo caddy fmt --overwrite /etc/caddy/Caddyfile
    sudo caddy validate --config /etc/caddy/Caddyfile
    sudo systemctl reload caddy
    ```
 
-4. **Para atualizar o serviço no futuro:**
+4. **Como atualizar a aplicação e a imagem Docker no servidor:**
+
+   Sempre que houver uma nova versão publicada no repositório e no GHCR, acesse a pasta do projeto no servidor, atualize os arquivos locais, baixe a nova imagem e recrie o container:
 
    ```bash
+   cd ~/Fast-PDFedit
+   git pull
    docker compose pull
    docker compose up -d
+   docker image prune -f
    ```
 
 ## Como rodar localmente (Desenvolvimento)
@@ -198,7 +210,7 @@ Fast-PDFedit/
 ## Licenças e Atribuições
 
 * **Fast PDFedit**: licenciado sob a licença MIT (consulte o arquivo `LICENSE` na raiz do repositório).
-* **Motor `pdfcraft_core` ([PdfCraft](https://github.com/storytold/pdfcraft.git) / [ArtCraft](https://getartcraft.com/))**: licenciado sob `MIT OR Apache-2.0`. Os textos completos e avisos de terceiros encontram-se em:
+* **Motor `pdfcraft_core` ([PdfCraft](https://github.com/storytold/pdfcraft.git) / [ArtCraft](https://getartcraft.com/))**: licenciado sob ambas as licenças MIT e Apache-2.0 (`MIT AND Apache-2.0`). Os textos completos e avisos de terceiros encontram-se em:
   * `pdfcraft_core/LICENSE-MIT`
   * `pdfcraft_core/LICENSE-APACHE`
   * `pdfcraft_core/NOTICE`
