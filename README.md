@@ -1,59 +1,88 @@
 # Fast PDFedit v0.1
 
-Editor web para PDFs editáveis com backend em **FastAPI** (Python), processamento complementar de camadas e achatamento com **PyMuPDF (`fitz`)**, interface em **HTML/CSS/JavaScript (Canvas)** e motor de inspeção, renderização e edição de formulários em **Rust** (`pdfcraft_probe`).
+Editor web open source para PDFs editáveis com backend em **FastAPI** (Python), processamento complementar de camadas e achatamento com **PyMuPDF (`fitz`)**, interface interativa em **HTML/CSS/JavaScript (Canvas)** e motor de inspeção, renderização e edição de formulários em **Rust** (`pdfcraft_probe`).
 
 ## Reconhecimentos: ArtCraft e PdfCraft
 
-Este projeto existe graças ao trabalho excepcional da equipe do **[ArtCraft](https://getartcraft.com/)** no desenvolvimento do projeto open source **[PdfCraft](https://github.com/storytold/pdfcraft.git)**, que fornece toda a base de engenharia em Rust (`pdfcraft_core`) responsável pela leitura estrutural de documentos PDF, renderização de páginas e manipulação de formulários interativos.
+Este projeto é construído sobre a engenharia open source do **[PdfCraft](https://github.com/storytold/pdfcraft.git)**, desenvolvido pela equipe do **[ArtCraft](https://getartcraft.com/)**, que fornece o núcleo em Rust (`pdfcraft_core`) responsável pela leitura estrutural de documentos PDF, renderização de páginas e avaliação de formulários interativos.
 
 * **Site oficial do ArtCraft:** <https://getartcraft.com/>
 * **Repositório oficial do PdfCraft:** <https://github.com/storytold/pdfcraft.git>
 
+## Arquitetura e Fluxo de Funcionamento
+
+O **Fast PDFedit** separa a interface do usuário, a orquestração da API e a manipulação de baixo nível do PDF em camadas bem definidas:
+
+1. **Front-end (`app/static/`)**: interface em HTML/CSS/JavaScript com Canvas interativo para upload, visualização de páginas, preenchimento de campos de formulário, inserção de textos livres (`free_texts`) e desenhos à mão livre (`strokes`).
+2. **Backend / API (`app/main.py` e `app/pdf_engine.py`)**: servidor FastAPI que gerencia sessões temporárias em memória com TTL, impõe limites de tamanho de arquivo e concorrência, e coordena a chamada ao motor Rust e ao `PyMuPDF`.
+3. **Motor Rust (`pdfcraft_probe`)**: binário CLI compilado a partir de `pdfcraft_core/crates/engine/src/bin/pdfcraft_probe.rs` que inspeciona campos/dimensões, renderiza páginas em PNG e aplica valores em formulários PDF.
+4. **Composição Final (`PyMuPDF`)**: na exportação, o backend recebe o PDF com os formulários preenchidos pelo motor Rust e aplica textos livres, traços vetoriais e o achatamento (`flatten`) antes de entregar o arquivo final para download.
+
 ## Como o `pdfcraft_probe` funciona
 
-O binário `pdfcraft_probe` (localizado em `pdfcraft_core/crates/engine/src/bin/pdfcraft_probe.rs`) expõe o motor Rust via linha de comando (CLI) para o backend Python, sem alterar os arquivos originais do `pdfcraft_core`:
+O binário `pdfcraft_probe` expõe o motor Rust via linha de comando (CLI) para o backend Python sem modificar os arquivos originais do `pdfcraft_core`:
 
 * **Inspeção (`<pdf>`)**: abre o documento em sessão, verifica se é editável (`editable`), lê as dimensões das páginas (`width`, `height`) e os campos de formulário (`name`, `kind`, `value`, `read_only`, `hidden`, `widgets`), normaliza os retângulos dos *widgets* para o espaço visual `[0.0, 1.0]` considerando rotação e *crop*, e imprime o resultado em JSON no `stdout`.
 * **Renderização (`render [--page <p>] [--dpi <d>] --out <arquivo.png> <pdf>`)**: renderiza a página solicitada (baseada em 1, padrão `1`) na escala correspondente ao `dpi` (padrão `150`, limitado entre `72` e `300`) e grava o PNG RGBA no caminho indicado em `--out`.
 * **Avaliação (`eval [--fields-json <campos.json>] [--out <saida.pdf>] <pdf>`)**: aplica opcionalmente valores de campos via `Edit::SetFieldValue` a partir de um JSON (ignorando campos que já possuem o mesmo valor), grava opcionalmente o PDF resultante em `--out` e imprime em JSON os valores finais de todos os campos (`fields`) e o total aplicado (`applied_fields`).
 * **Exportação (`export [--fields-json <campos.json>] --out <saida.pdf> <pdf>`)**: aplica os valores de campos na sessão e grava o PDF resultante em `--out`, que o backend Python complementa aplicando textos livres, traços e achatamento (`flatten`).
 
-## Como rodar em um servidor (Docker + GHCR)
+## Como rodar em um servidor (Docker + GHCR + Caddy)
 
-As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub Actions e publicadas no **GitHub Container Registry (GHCR)** (`ghcr.io/nath-veloz/fast-pdfedit:latest`), evitando a necessidade de compilar o código Rust diretamente no servidor de produção.
+As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub Actions (multi-stage build) e publicadas de forma pública no **GitHub Container Registry (GHCR)** (`ghcr.io/nath-veloz/fast-pdfedit:latest`). Isso permite implantar o serviço em servidores enxutos (como instâncias de 1 GB de RAM) sem precisar compilar Rust na máquina de produção.
 
 ### Pré-requisitos no servidor
 
 * **Docker** e **Docker Compose** (`docker compose`) instalados.
-* *(Recomendado para acesso público)* Um proxy reverso como **Nginx** ou **Caddy** para gerenciar domínio e certificado HTTPS/TLS apontando para `127.0.0.1:8000`.
+* **Caddy** (ou Nginx) instalado no host para atuar como proxy reverso com certificado HTTPS/TLS automático apontando para `127.0.0.1:8000`.
+* Um domínio ou subdomínio (por exemplo, via Duck DNS) com registro `A` apontando para o IP público do servidor.
 * *(Recomendado em instâncias de 1 GB de RAM)* Configurar entre 1 GB e 2 GB de memória *swap* no sistema operacional para absorver picos momentâneos de processamento.
 
 ### Passo a passo no servidor
 
-1. **Baixe o arquivo `docker-compose.yml`** (ou clone o repositório):
+1. **Clone o repositório e acesse a pasta do projeto:**
 
    ```bash
    git clone https://github.com/Nath-veloz/Fast-PDFedit.git
    cd Fast-PDFedit
    ```
 
-2. **Baixe a imagem pré-construída e inicie o container:**
+2. **Baixe a imagem pré-construída do GHCR e inicie o container:**
 
    ```bash
    docker compose pull
    docker compose up -d
    ```
 
-3. **Para atualizar o serviço no futuro:**
+   O serviço ficará escutando localmente em `http://127.0.0.1:8000` com limites de memória e concorrência já ajustados no `docker-compose.yml`.
+
+3. **Configure o proxy reverso com HTTPS (Caddy):**
+
+   Use o modelo disponível em `deploy/Caddyfile.example` como base para o `/etc/caddy/Caddyfile` do servidor, substituindo `seu-subdominio.duckdns.org` pelo seu endereço real:
+
+   ```caddyfile
+   seu-subdominio.duckdns.org {
+       request_body {
+           max_size 12MB
+       }
+
+       reverse_proxy 127.0.0.1:8000
+   }
+   ```
+
+   Em seguida, valide e recarregue o serviço do Caddy:
+
+   ```bash
+   sudo caddy validate --config /etc/caddy/Caddyfile
+   sudo systemctl reload caddy
+   ```
+
+4. **Para atualizar o serviço no futuro:**
 
    ```bash
    docker compose pull
    docker compose up -d
    ```
-
-4. **Acesse a aplicação:**
-
-   O serviço ficará escutando localmente em `http://127.0.0.1:8000`, pronto para receber tráfego através do seu proxy reverso (Nginx/Caddy).
 
 ## Como rodar localmente (Desenvolvimento)
 
@@ -61,7 +90,7 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
 
 * **Git** (para clonar o repositório)
 * **Python 3.10+** com `pip` (recomendado o uso de ambiente virtual `venv`)
-* **Rust e Cargo** (`rustc` e `cargo` instalados via [rustup](https://rustup.rs/))
+* **Rust e Cargo** (`rustc` e `cargo` instalados via [rustup](https://rustup.rs/), com suporte à edição 2024)
 
 ### Passo a passo
 
@@ -98,11 +127,17 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
    cd ..
    ```
 
-   *(Para desenvolvimento rápido, você também pode rodar `cargo build --bin pdfcraft_probe` sem `--release`.)*
+   *(Para compilação mais rápida durante testes locais, você também pode rodar `cargo build --bin pdfcraft_probe` sem `--release`.)*
 
-4. **Configure o caminho do binário (se necessário) e inicie o servidor:**
+4. **Inicie o servidor de desenvolvimento:**
 
-   Por padrão, o backend procura automaticamente o executável em `pdfcraft_core/target/release/pdfcraft_probe(.exe)` e, caso não exista, faz fallback para `pdfcraft_core/target/debug/pdfcraft_probe(.exe)`. Se quiser apontar outro caminho manualmente:
+   Por padrão, o backend procura automaticamente o executável em `pdfcraft_core/target/release/pdfcraft_probe(.exe)` e, caso não exista, faz fallback para `pdfcraft_core/target/debug/pdfcraft_probe(.exe)`:
+
+   ```bash
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+
+   Caso queira apontar outro caminho manualmente:
 
    * **Linux / macOS:**
 
@@ -122,6 +157,25 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
 
    Abra `http://127.0.0.1:8000` para carregar, preencher, anotar e exportar seus PDFs.
 
+## Estrutura do Projeto
+
+```text
+Fast-PDFedit/
+├── .github/workflows/       # Pipeline CI/CD para build multi-stage e push no GHCR
+├── app/
+│   ├── main.py              # API FastAPI, cache LRU em memória e controle de sessões
+│   ├── pdf_engine.py        # Ponte CLI com pdfcraft_probe + composição/flatten com PyMuPDF
+│   └── static/              # Front-end HTML, CSS e JavaScript (Canvas)
+├── deploy/
+│   └── Caddyfile.example    # Modelo de configuração de proxy reverso e HTTPS com Caddy
+├── pdfcraft_core/           # Núcleo em Rust (PdfCraft) e licenças de terceiros
+├── docker-compose.yml       # Orquestração do container em produção usando imagem do GHCR
+├── Dockerfile               # Build multi-stage (Rust builder + Python runtime enxuto)
+├── LICENSE                  # Licença MIT do Fast PDFedit
+├── README.md                # Documentação do projeto
+└── requirements.txt         # Dependências Python (FastAPI, Uvicorn, PyMuPDF, etc.)
+```
+
 ## Variáveis de Ambiente
 
 | Variável | Descrição | Padrão |
@@ -136,10 +190,15 @@ As imagens Docker do **Fast PDFedit** são compiladas automaticamente via GitHub
 | `MAX_TEMP_PDFS` | Limite de arquivos PDF temporários mantidos em disco para o `pdfcraft_probe`. | `32` (`12` no Docker) |
 | `SESSION_TTL_SECONDS` | Tempo de expiração (em segundos) das sessões e arquivos temporários inativos. | `3600` (`1800` no Docker) |
 
+## Segurança e Privacidade
+
+* Os arquivos enviados são processados exclusivamente em memória e em diretório temporário isolado durante a sessão ativa, sendo descartados automaticamente após o fechamento da sessão ou expiração do tempo limite (`SESSION_TTL_SECONDS`).
+* Não há persistência permanente de documentos enviados pelos usuários no servidor.
+
 ## Licenças e Atribuições
 
-* **Fast PDFedit**: licenciado sob a licença MIT (veja `LICENSE` na raiz do repositório).
-* **Motor `pdfcraft_core` (PdfCraft / ArtCraft)**: licenciado sob `MIT AND Apache-2.0`. Os textos completos e avisos de terceiros encontram-se em:
+* **Fast PDFedit**: licenciado sob a licença MIT (consulte o arquivo `LICENSE` na raiz do repositório).
+* **Motor `pdfcraft_core` ([PdfCraft](https://github.com/storytold/pdfcraft.git) / [ArtCraft](https://getartcraft.com/))**: licenciado sob `MIT OR Apache-2.0`. Os textos completos e avisos de terceiros encontram-se em:
   * `pdfcraft_core/LICENSE-MIT`
   * `pdfcraft_core/LICENSE-APACHE`
   * `pdfcraft_core/NOTICE`
